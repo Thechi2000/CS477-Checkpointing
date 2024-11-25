@@ -12,11 +12,11 @@ MODULE_LICENSE("GPL");
 static int hello_init(void) {
   printk(KERN_ALERT "Hello, world\n");
 
-  struct task_struct *task = find_task_by_vpid((pid_t)163);
+  struct task_struct *task = pid_task(find_vpid(64736), PIDTYPE_PID);;
   printk(KERN_INFO "Process: %ld [PID = %d]\n", task->thread.sp, task->pid);
   struct pt_regs *regs = task_pt_regs(task);
 
-  printk(KERN_INFO "RIP %p\n", (void *)regs->ip);
+  printk(KERN_INFO "RIP %p\n", (void *)regs->ax);
 
   return 0;
 }
