@@ -1,4 +1,5 @@
 #include "linux/pid.h"
+#include <asm/ptrace.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -6,41 +7,109 @@
 #include <linux/sched/signal.h>
 #include <linux/sched/task_stack.h>
 #include <linux/thread_info.h>
+#include <linux/cdev.h>
+#include <linux/device.h>
+
+
+#define DEVICE_NAME "get_task"
+#define CLASS_NAME "get_task_class"
+
+#define READ_REGS _IOR('a', 1, my_regs_t)
+
 
 MODULE_LICENSE("GPL");
 
-static int hello_init(void) {
-  printk(KERN_ALERT "Hello, world\n");
+typedef struct {
+  uint64_t rax;
+  uint64_t rbx;
+} my_regs_t;
 
-  struct task_struct *task = pid_task(find_vpid(88296), PIDTYPE_PID);;
-  printk(KERN_INFO "Process: %ld [PID = %d]\n", task->thread.sp, task->pid);
-  struct pt_regs *regs = task_pt_regs(task);
 
-  printk(KERN_INFO "AX %lu\n", regs->ax);
-  printk(KERN_INFO "BX %lu\n", regs->bx);
-  printk(KERN_INFO "CX %lu\n", regs->cx);
-  printk(KERN_INFO "DX %lu\n", regs->dx);
-  printk(KERN_INFO "SI %lu\n", regs->si);
-  printk(KERN_INFO "DI %lu\n", regs->di);
-  printk(KERN_INFO "BP %lu\n", regs->bp);
-  printk(KERN_INFO "CS %lu\n", regs->cs);
-  printk(KERN_INFO "ORIG_AX %lu\n", regs->orig_ax);
-  printk(KERN_INFO "IP %lu\n", regs->ip);
-  printk(KERN_INFO "FLAGS %lu\n", regs->flags);
-  printk(KERN_INFO "SP %lu\n", regs->sp);
-  printk(KERN_INFO "SS %lu\n", regs->ss);
-  printk(KERN_INFO "8 %lu\n", regs->r8);
-  printk(KERN_INFO "9 %lu\n", regs->r9);
-  printk(KERN_INFO "10 %lu\n", regs->r10);
-  printk(KERN_INFO "11 %lu\n", regs->r11);
-  printk(KERN_INFO "12 %lu\n", regs->r12);
-  printk(KERN_INFO "13 %lu\n", regs->r13);
-  printk(KERN_INFO "14 %lu\n", regs->r14);
-  printk(KERN_INFO "15 %lu\n", regs->r15);
+static int major; 
+static struct class *device_class;
+static struct device *device;
 
+
+// Prototypes
+static int my_init(void);
+static void my_exit(void);
+static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+
+
+// File operations
+static struct file_operations fops =
+{
+  .owner          = THIS_MODULE,
+  .unlocked_ioctl = etx_ioctl,
+};
+
+
+module_init(my_init);
+module_exit(my_exit);
+
+
+static int my_init(void) {
+  major = register_chrdev(0, DEVICE_NAME, &fops);
+  if (major < 0) {
+      printk(KERN_ERR "get_task: Failed to register a major number\n");
+      return major;
+  }
+  
+  device_class = class_create(CLASS_NAME);
+  if (IS_ERR(device_class)) {
+    unregister_chrdev(major, DEVICE_NAME);
+    printk(KERN_ERR "simple_device: Failed to register device class\n");
+    return PTR_ERR(device_class);
+  }
+
+  device = device_create(device_class, NULL, MKDEV(major, 0), NULL, DEVICE_NAME);
+  if (IS_ERR(device)) {
+    class_destroy(device_class);
+    unregister_chrdev(major, DEVICE_NAME);
+    printk(KERN_ERR "simple_device: Failed to create the device\n");
+    return PTR_ERR(device);
+  }
+
+  printk(KERN_INFO "simple_device: Device initialized successfully\n");
+  return 0;
+
+  printk(KERN_DEBUG "driver succesly loaded\n");
   return 0;
 }
-static void hello_exit(void) { printk(KERN_ALERT "Goodbye, cruel world\n"); }
 
-module_init(hello_init);
-module_exit(hello_exit);
+
+static void my_exit() { 
+  device_destroy(device_class, MKDEV(major, 0));
+  class_unregister(device_class);
+  class_destroy(device_class);
+  unregister_chrdev(major, DEVICE_NAME);
+
+  printk(KERN_DEBUG "driver unloaded with success\n");
+}
+
+
+static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+  switch(cmd) {
+    case READ_REGS:
+      pr_info("Read regs\n");
+      struct task_struct *task = pid_task(find_vpid(1), PIDTYPE_PID);
+      struct pt_regs *regs = task_pt_regs(task);
+
+
+      my_regs_t my_regs = { 
+        regs->ax, 
+        regs->bx 
+      };
+
+      if( copy_to_user((my_regs_t*) arg, &my_regs, sizeof(my_regs_t)) ) {
+        pr_err("Failed to read regs of task %d\n", 1);
+      }
+      break;
+    default:
+      pr_info("Got %u, expected one of:\n", cmd);
+      pr_info("READ_REGS: %lu\n", READ_REGS);
+      break;
+  }
+  return 0;
+}

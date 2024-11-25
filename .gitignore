@@ -4,3 +4,6 @@
 *.symvers
 *.order
 *.o
+
+.vscode
+app/target
