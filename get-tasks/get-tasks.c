@@ -1,4 +1,4 @@
-#include "linux/pid.h"
+#include <linux/fs.h>
 #include <asm/ptrace.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
