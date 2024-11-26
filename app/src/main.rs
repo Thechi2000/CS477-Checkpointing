@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use nix::ioctl_read;
+use nix::ioctl_readwrite;
 use std::{fs::OpenOptions, os::fd::AsRawFd};
 
 #[repr(C)]
@@ -8,7 +8,14 @@ struct MyRegs {
     rbx: u64,
 }
 
-ioctl_read!(get_regs, b'a', 1, MyRegs);
+#[repr(C)]
+struct Probe {
+    pid: u64,
+    rax: u64,
+    rbx: u64,
+}
+
+ioctl_readwrite!(read_regs, b'a', 1, Probe);
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -20,7 +27,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     #[command(about = "Get the registers of a process")]
-    Probe { pid: u64 },
+    Read { pid: u64 },
 }
 
 fn main() {
@@ -32,13 +39,21 @@ fn main() {
         .open("/dev/get_task")
         .expect("Failed to open device");
 
-    let mut data = MyRegs { rax: 0, rbx: 0 };
+    match cli.command {
+        Command::Read { pid } => {
+            let mut data = Probe {
+                pid,
+                rax: 0,
+                rbx: 0,
+            };
 
-    unsafe {
-        get_regs(file.as_raw_fd(), &mut data).expect("ioctl failed");
+            unsafe {
+                read_regs(file.as_raw_fd(), &mut data).expect("ioctl failed");
+            }
 
-        println!("ioctl succeeded");
-        println!("{:x}", data.rax);
-        println!("{:x}", data.rbx);
+            println!("ioctl succeeded");
+            println!("{:x}", data.rax);
+            println!("{:x}", data.rbx);
+        }
     }
 }
