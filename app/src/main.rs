@@ -9,10 +9,22 @@ struct MyRegs {
 }
 
 #[repr(C)]
+#[derive(Debug, Default)]
 struct Probe {
     pid: u64,
     rax: u64,
     rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    rip: u64,
 }
 
 ioctl_readwrite!(read_regs, b'a', 1, Probe);
@@ -43,8 +55,7 @@ fn main() {
         Command::Read { pid } => {
             let mut data = Probe {
                 pid,
-                rax: 0,
-                rbx: 0,
+                ..Default::default()
             };
 
             unsafe {
@@ -52,8 +63,7 @@ fn main() {
             }
 
             println!("ioctl succeeded");
-            println!("{:x}", data.rax);
-            println!("{:x}", data.rbx);
+            println!("{:#x?}", data);
         }
     }
 }

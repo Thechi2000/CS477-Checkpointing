@@ -21,6 +21,18 @@ typedef struct {
   uint64_t pid;
   uint64_t rax;
   uint64_t rbx;
+  uint64_t rcx;
+  uint64_t rdx;
+  uint64_t r8;
+  uint64_t r9;
+  uint64_t r10;
+  uint64_t r11;
+  uint64_t r12;
+  uint64_t r13;
+  uint64_t r14;
+  uint64_t r15;
+  uint64_t rip;
+
 } regs_t;
 
 static int major;
@@ -94,6 +106,17 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
 
     probe.rax = regs->ax;
     probe.rbx = regs->bx;
+    probe.rcx = regs->cx;
+    probe.rdx = regs->dx;
+    probe.r8 = regs->r8;
+    probe.r9 = regs->r9;
+    probe.r10 = regs->r10;
+    probe.r11 = regs->r11;
+    probe.r12 = regs->r12;
+    probe.r13 = regs->r13;
+    probe.r14 = regs->r14;
+    probe.r15 = regs->r15;
+    probe.rip = regs->ip;
 
     if (copy_to_user((regs_t *)arg, &probe, sizeof(regs_t))) {
       pr_err("Failed to write results for task %d\n", 1);
