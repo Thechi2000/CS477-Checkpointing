@@ -4,7 +4,13 @@ use nix::{
     sys::{ptrace, wait::waitpid},
     unistd::Pid,
 };
-use std::{ffi::CStr, fs::OpenOptions, os::fd::AsRawFd};
+use serde::{Deserialize, Serialize};
+use std::{
+    ffi::CStr,
+    fs::OpenOptions,
+    io::{Read, Write},
+    os::fd::AsRawFd,
+};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -25,7 +31,7 @@ struct ProbeRaw {
     rip: u64,
     exe: [u8; 4096],
 }
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Probe {
     pid: u64,
     rax: u64,
@@ -59,8 +65,12 @@ enum Command {
     Read {
         pid: u64,
     },
+    Dump {
+        pid: u64,
+        output: String,
+    },
     Restore {
-        exe: String,
+        dump: String,
     },
 }
 
@@ -125,7 +135,70 @@ fn main() {
             println!("ioctl succeeded");
             println!("{:#x?}", data);
         }
-        Command::Restore { exe } => {
+        Command::Dump { pid, output } => {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/get_task")
+                .expect("Failed to open device");
+
+            let mut data = ProbeRaw {
+                pid,
+                rax: 0,
+                rbx: 0,
+                rcx: 0,
+                rdx: 0,
+                r8: 0,
+                r9: 0,
+                r10: 0,
+                r11: 0,
+                r12: 0,
+                r13: 0,
+                r14: 0,
+                r15: 0,
+                rip: 0,
+                exe: [0; 4096],
+            };
+
+            let exe;
+
+            unsafe {
+                read_regs(file.as_raw_fd(), &mut data).expect("ioctl failed");
+
+                exe = CStr::from_ptr(data.exe.as_ptr() as *const _)
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+            }
+
+            let data = Probe {
+                pid: data.pid,
+                rax: data.rax,
+                rbx: data.rbx,
+                rcx: data.rcx,
+                rdx: data.rdx,
+                r8: data.r8,
+                r9: data.r9,
+                r10: data.r10,
+                r11: data.r11,
+                r12: data.r12,
+                r13: data.r13,
+                r14: data.r14,
+                r15: data.r15,
+                rip: data.rip,
+                exe,
+            };
+
+            std::fs::File::create(output)
+                .expect("Failed to create output file")
+                .write_all(
+                    postcard::to_allocvec(&data)
+                        .expect("Failed to serialize data")
+                        .as_slice(),
+                )
+                .expect("Failed to write to output file");
+        }
+        Command::Restore { dump } => {
             println!("Spawning process");
             /* let cmd = unsafe {
                 process::Command::new(exe)
@@ -140,6 +213,16 @@ fn main() {
                     .expect("Failed to kill process")
             }; */
 
+            let dump = {
+                let mut bytes = vec![];
+                std::fs::File::open(dump)
+                    .expect("Failed to open dump file")
+                    .read_to_end(&mut bytes)
+                    .expect("Failed to read from dump file");
+
+                postcard::from_bytes::<Probe>(&bytes).expect("Invalid dump file")
+            };
+
             let pid;
             unsafe {
                 pid = libc::fork();
@@ -149,7 +232,7 @@ fn main() {
                     libc::raise(libc::SIGSTOP);
                     println!("Post-exec");
 
-                    libc::execv(exe.as_ptr() as *const i8, std::ptr::null_mut());
+                    libc::execv(dump.exe.as_ptr() as *const i8, std::ptr::null_mut());
                 }
             }
             let pid = Pid::from_raw(pid);
@@ -169,6 +252,8 @@ fn main() {
             ptrace::cont(pid, None).unwrap();
 
             println!("Restored process");
+
+            waitpid(pid, None).unwrap();
         }
     }
 }
