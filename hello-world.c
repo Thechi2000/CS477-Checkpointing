@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 int main() {
-  for (int i = 0; i < 1000000000; i++) {
+  for (int i = 0; i < 10; i++) {
     printf("Hello world!\n");
   }
 }

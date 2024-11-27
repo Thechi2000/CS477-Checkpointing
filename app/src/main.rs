@@ -1,12 +1,10 @@
 use clap::{Parser, Subcommand};
-use nix::ioctl_readwrite;
+use nix::{
+    ioctl_readwrite,
+    sys::{ptrace, wait::waitpid},
+    unistd::Pid,
+};
 use std::{ffi::CStr, fs::OpenOptions, os::fd::AsRawFd};
-
-#[repr(C)]
-struct MyRegs {
-    rax: u64,
-    rbx: u64,
-}
 
 #[repr(C)]
 #[derive(Debug)]
@@ -58,20 +56,25 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     #[command(about = "Get the registers of a process")]
-    Read { pid: u64 },
+    Read {
+        pid: u64,
+    },
+    Restore {
+        exe: String,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/get_task")
-        .expect("Failed to open device");
-
     match cli.command {
         Command::Read { pid } => {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/get_task")
+                .expect("Failed to open device");
+
             let mut data = ProbeRaw {
                 pid,
                 rax: 0,
@@ -121,6 +124,51 @@ fn main() {
 
             println!("ioctl succeeded");
             println!("{:#x?}", data);
+        }
+        Command::Restore { exe } => {
+            println!("Spawning process");
+            /* let cmd = unsafe {
+                process::Command::new(exe)
+                    .pre_exec(|| {
+                        println!("Pre-exec");
+                        ptrace::traceme().expect("Failed to ptrace traceme");
+                        thread::sleep(Duration::from_secs(5));
+                        println!("Post-exec");
+                        Ok(())
+                    })
+                    .spawn()
+                    .expect("Failed to kill process")
+            }; */
+
+            let pid;
+            unsafe {
+                pid = libc::fork();
+                if pid == 0 {
+                    println!("Pre-exec");
+                    ptrace::traceme().expect("Failed to ptrace traceme");
+                    libc::raise(libc::SIGSTOP);
+                    println!("Post-exec");
+
+                    libc::execv(exe.as_ptr() as *const i8, std::ptr::null_mut());
+                }
+            }
+            let pid = Pid::from_raw(pid);
+
+            println!("Spawned process");
+
+            waitpid(pid, None).unwrap();
+
+            println!("Traced process");
+            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACEEXEC).unwrap();
+            ptrace::cont(pid, None).unwrap();
+
+            waitpid(pid, None).unwrap();
+
+            println!("{:#x?}", ptrace::getregs(pid).unwrap());
+
+            ptrace::cont(pid, None).unwrap();
+
+            println!("Restored process");
         }
     }
 }
