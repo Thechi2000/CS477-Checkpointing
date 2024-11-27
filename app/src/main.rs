@@ -199,7 +199,6 @@ fn main() {
                 .expect("Failed to write to output file");
         }
         Command::Restore { dump } => {
-            println!("Spawning process");
             /* let cmd = unsafe {
                 process::Command::new(exe)
                     .pre_exec(|| {
@@ -225,33 +224,51 @@ fn main() {
 
             let pid;
             unsafe {
-                pid = libc::fork();
-                if pid == 0 {
-                    println!("Pre-exec");
-                    ptrace::traceme().expect("Failed to ptrace traceme");
-                    libc::raise(libc::SIGSTOP);
-                    println!("Post-exec");
+                use libc::*;
 
-                    libc::execv(dump.exe.as_ptr() as *const i8, std::ptr::null_mut());
+                pid = fork();
+                if pid == 0 {
+                    ptrace::traceme().expect("Failed to ptrace traceme");
+                    raise(SIGSTOP);
+
+                    execv(dump.exe.as_ptr() as *const i8, std::ptr::null_mut());
                 }
             }
             let pid = Pid::from_raw(pid);
 
-            println!("Spawned process");
-
             waitpid(pid, None).unwrap();
 
-            println!("Traced process");
             ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACEEXEC).unwrap();
             ptrace::cont(pid, None).unwrap();
 
             waitpid(pid, None).unwrap();
 
-            println!("{:#x?}", ptrace::getregs(pid).unwrap());
+            let mut regs = ptrace::getregs(pid).unwrap();
 
+            println!("{:x} -> {:x}", regs.rip, dump.rip);
+
+            regs.rax = dump.rax;
+            regs.rbx = dump.rbx;
+            regs.rcx = dump.rcx;
+            regs.rdx = dump.rdx;
+            regs.r8 = dump.r8;
+            regs.r9 = dump.r9;
+            regs.r10 = dump.r10;
+            regs.r11 = dump.r11;
+            regs.r12 = dump.r12;
+            regs.r13 = dump.r13;
+            regs.r14 = dump.r14;
+            regs.r15 = dump.r15;
+
+            // TODO: needs an offset ?
+            // https://stackoverflow.com/questions/38006277/weird-behavior-setting-rip-with-ptrace
+            // dmesg (with restored rip 00007ffff7e203f4):
+            // [45434.139862] test[316473]: segfault at 7ffff7e203f4 ip 00007ffff7e203f4 sp 00007ffc7128d7b0 error 14 likely on CPU 4 (core 0, socket 0)
+            // [45434.139874] Code: Unable to access opcode bytes at 0x7ffff7e203ca.
+            regs.rip = dump.rip;
+
+            ptrace::setregs(pid, regs).unwrap();
             ptrace::cont(pid, None).unwrap();
-
-            println!("Restored process");
 
             waitpid(pid, None).unwrap();
         }
