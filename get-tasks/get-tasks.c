@@ -1,3 +1,4 @@
+#include "uapi/linux/limits.h"
 #include <asm/ptrace.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
@@ -32,7 +33,7 @@ typedef struct {
   uint64_t r14;
   uint64_t r15;
   uint64_t rip;
-
+  char exe[PATH_MAX];
 } regs_t;
 
 static int major;
@@ -103,6 +104,22 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     pr_info("Read regs\n");
     struct task_struct *task = pid_task(find_vpid(probe.pid), PIDTYPE_PID);
     struct pt_regs *regs = task_pt_regs(task);
+
+    char *pathname, *p;
+    struct mm_struct *mm = task->mm;
+    if (mm) {
+      mmap_read_lock(mm);
+      if (mm->exe_file) {
+        pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+        if (pathname) {
+          p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+          strcpy(probe.exe, p);
+        }
+      }
+      mmap_read_unlock(mm);
+    }
+
+    printk(KERN_INFO "PATH: %s\n", p);
 
     probe.rax = regs->ax;
     probe.rbx = regs->bx;
