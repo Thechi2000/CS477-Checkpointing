@@ -1,12 +1,7 @@
-#include <signal.h>
 #include <stdio.h>
 
 int main() {
-  for (int i = 0; i < 10; i++) {
-    printf("Hello world!\n");
-
-    if(i == 4) {
-      raise(SIGSTOP);
-    }
+  for (int i = 0; i < 1000000; i++) {
+    printf("%d: Hello world!\n", i);
   }
 }

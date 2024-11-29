@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use nix::{
     ioctl_readwrite,
-    sys::{ptrace, wait::waitpid},
+    sys::{ptrace, signal::Signal, wait::waitpid},
     unistd::Pid,
 };
 use serde::{Deserialize, Serialize};
@@ -243,6 +243,11 @@ fn main() {
 
             waitpid(pid, None).unwrap();
 
+            ptrace::write(pid, 0x401042 as *mut libc::c_void, 0xCC).unwrap();
+            ptrace::cont(pid, None).unwrap();
+
+            waitpid(pid, None).unwrap();
+
             let mut regs = ptrace::getregs(pid).unwrap();
 
             println!("{:x} -> {:x}", regs.rip, dump.rip);
@@ -262,7 +267,7 @@ fn main() {
 
             // TODO: needs an offset ?
             // https://stackoverflow.com/questions/38006277/weird-behavior-setting-rip-with-ptrace
-            // dmesg (with restored rip 00007ffff7e203f4):
+            // dmesg (when restoring rip to 00007ffff7e203f4):
             // [45434.139862] test[316473]: segfault at 7ffff7e203f4 ip 00007ffff7e203f4 sp 00007ffc7128d7b0 error 14 likely on CPU 4 (core 0, socket 0)
             // [45434.139874] Code: Unable to access opcode bytes at 0x7ffff7e203ca.
             regs.rip = dump.rip;
@@ -270,7 +275,9 @@ fn main() {
             ptrace::setregs(pid, regs).unwrap();
             ptrace::cont(pid, None).unwrap();
 
-            waitpid(pid, None).unwrap();
+            let status = waitpid(pid, None).unwrap();
+
+            println!("{:#?}", status);
         }
     }
 }
