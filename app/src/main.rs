@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use nix::{
     ioctl_readwrite,
-    sys::{ptrace, signal::Signal, wait::waitpid},
+    sys::{ptrace, wait::waitpid},
     unistd::Pid,
 };
 use serde::{Deserialize, Serialize};
