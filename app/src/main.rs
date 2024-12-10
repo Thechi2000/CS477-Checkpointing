@@ -4,6 +4,7 @@ use nix::{
     sys::{ptrace, wait::waitpid},
     unistd::Pid,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::CStr,
@@ -11,6 +12,8 @@ use std::{
     io::{Read, Write},
     os::fd::AsRawFd
 };
+
+const INT3: i64 = 0xcc;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -253,7 +256,7 @@ fn main() {
 
             waitpid(pid, None).unwrap();
 
-            ptrace::write(pid, 0x401690 as *mut libc::c_void, 0xCC).unwrap();
+            ptrace::write(pid, find_main_address(&dump.exe) as *mut libc::c_void, INT3).unwrap();
             ptrace::cont(pid, None).unwrap();
 
             let status = waitpid(pid, None).unwrap();
@@ -292,4 +295,24 @@ fn main() {
             println!("{:#?}", status);
         }
     }
+}
+
+fn find_main_address(exe: &str) -> i32 {
+    let re = Regex::new("(\\d+) . main\n").unwrap();
+
+    let nm_output = std::process::Command::new("nm")
+        .arg(exe)
+        .output()
+        .expect("Failed to run nm");
+
+    let nm_output = String::from_utf8(nm_output.stdout).unwrap();
+
+    let main_address = re
+        .captures(&nm_output)
+        .expect("Failed to find main address")
+        .get(1)
+        .unwrap()
+        .as_str();
+
+    i32::from_str_radix(main_address, 16).unwrap()
 }
