@@ -9,7 +9,7 @@ use std::{
     ffi::CStr,
     fs::OpenOptions,
     io::{Read, Write},
-    os::fd::AsRawFd,
+    os::fd::AsRawFd
 };
 
 #[repr(C)]
@@ -227,18 +227,28 @@ fn main() {
                 use libc::*;
 
                 pid = fork();
+                println!("{}", pid);
                 if pid == 0 {
                     ptrace::traceme().expect("Failed to ptrace traceme");
+
+                    // Stop itself for first setup phase
                     raise(SIGSTOP);
 
+                    // Execute binary
                     execv(dump.exe.as_ptr() as *const i8, std::ptr::null_mut());
                 }
             }
             let pid = Pid::from_raw(pid);
 
+            // First setup phase
+
+            // Sync on stop of the child process
             waitpid(pid, None).unwrap();
 
-            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACEEXEC).unwrap();
+            // Set option to stop execution at exec
+            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACEEXEC).expect("Error when setting ptrace option");
+
+            // Continue the execution of the child
             ptrace::cont(pid, None).unwrap();
 
             waitpid(pid, None).unwrap();
@@ -246,9 +256,11 @@ fn main() {
             ptrace::write(pid, 0x401690 as *mut libc::c_void, 0xCC).unwrap();
             ptrace::cont(pid, None).unwrap();
 
-            waitpid(pid, None).unwrap();
+            let status = waitpid(pid, None).unwrap();
+            println!("{:#?}", status);
 
-            let mut regs = ptrace::getregs(pid).unwrap();
+            let mut regs =
+                ptrace::getregs(pid).expect("Error when retrieving child process registers");
 
             println!("{:x} -> {:x}", regs.rip, dump.rip);
 
@@ -272,11 +284,11 @@ fn main() {
             // [45434.139874] Code: Unable to access opcode bytes at 0x7ffff7e203ca.
             regs.rip = dump.rip;
 
-            ptrace::setregs(pid, regs).unwrap();
+            ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
+
             ptrace::cont(pid, None).unwrap();
 
             let status = waitpid(pid, None).unwrap();
-
             println!("{:#?}", status);
         }
     }
