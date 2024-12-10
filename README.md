@@ -18,7 +18,7 @@ cargo b
 in `/`:
 
 ```
-gcc hello-world.c -O3 -no-pie -fno-pic
+gcc hello-world.c -O3 -no-pie -fno-pic -static
 ```
 
 ## Run

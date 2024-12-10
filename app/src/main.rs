@@ -243,7 +243,7 @@ fn main() {
 
             waitpid(pid, None).unwrap();
 
-            ptrace::write(pid, 0x401042 as *mut libc::c_void, 0xCC).unwrap();
+            ptrace::write(pid, 0x401690 as *mut libc::c_void, 0xCC).unwrap();
             ptrace::cont(pid, None).unwrap();
 
             waitpid(pid, None).unwrap();
