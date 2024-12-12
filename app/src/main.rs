@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     ffi::CStr,
     fs::{File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     os::fd::AsRawFd,
 };
 
@@ -51,6 +51,7 @@ struct Probe {
     r15: u64,
     rip: u64,
     exe: String,
+    stack: Vec<u8>,
 }
 
 ioctl_readwrite!(read_regs, b'a', 1, ProbeRaw);
@@ -136,6 +137,7 @@ fn main() {
                 r15: data.r15,
                 rip: data.rip,
                 exe,
+                stack: vec![],
             };
 
             println!("ioctl succeeded");
@@ -213,7 +215,7 @@ fn main() {
                     .to_owned();
             }
 
-            let data = Probe {
+            let mut data = Probe {
                 pid: data.pid,
                 rax: data.rax,
                 rbx: data.rbx,
@@ -229,7 +231,51 @@ fn main() {
                 r15: data.r15,
                 rip: data.rip,
                 exe,
+                stack: vec![],
             };
+
+            let stack_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[stack\]\n").unwrap();
+            let heap_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[heap\]\n").unwrap();
+
+            let mut map =
+                File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
+
+            let mut str = String::new();
+            map.read_to_string(&mut str)
+                .expect("Failed to read maps file");
+
+            let mut stack_from = usize::MAX;
+            let mut stack_to = 0;
+            println!("Stack:");
+            for c in stack_re.captures_iter(&str) {
+                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
+                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
+
+                stack_from = stack_from.min(from);
+                stack_to = stack_to.max(to);
+            }
+            println!("{:x} {:x}", stack_from, stack_to);
+
+            println!("Heap:");
+
+            let mut heap_from = usize::MAX;
+            let mut heap_to = 0;
+            for c in heap_re.captures_iter(&str) {
+                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
+                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
+
+                heap_from = heap_from.min(from);
+                heap_to = heap_to.max(to);
+            }
+            println!("{:x} {:x}", heap_from, heap_to);
+
+            let mut mem =
+                File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
+            mem.seek(std::io::SeekFrom::Start(stack_from as u64))
+                .unwrap();
+
+            data.stack.resize(stack_to - stack_from, 0);
+            mem.read_exact(data.stack.as_mut_slice()).unwrap();
 
             std::fs::File::create(output)
                 .expect("Failed to create output file")
