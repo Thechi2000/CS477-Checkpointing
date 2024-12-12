@@ -8,9 +8,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::CStr,
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::{Read, Write},
-    os::fd::AsRawFd
+    os::fd::AsRawFd,
 };
 
 const INT3: i64 = 0xcc;
@@ -65,7 +65,10 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     #[command(about = "Get the registers of a process")]
-    Read {
+    ReadRegs {
+        pid: u64,
+    },
+    ReadMem {
         pid: u64,
     },
     Dump {
@@ -81,7 +84,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Read { pid } => {
+        Command::ReadRegs { pid } => {
             let file = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -137,6 +140,42 @@ fn main() {
 
             println!("ioctl succeeded");
             println!("{:#x?}", data);
+        }
+        Command::ReadMem { pid } => {
+            let stack_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[stack\]\n").unwrap();
+            let heap_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[heap\]\n").unwrap();
+
+            let mut map =
+                File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
+
+            let mut str = String::new();
+            map.read_to_string(&mut str)
+                .expect("Failed to read maps file");
+
+            let mut stack_from = usize::MAX;
+            let mut stack_to = 0;
+            println!("Stack:");
+            for c in stack_re.captures_iter(&str) {
+                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
+                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
+
+                stack_from = stack_from.min(from);
+                stack_to = stack_to.max(to);
+            }
+            println!("{:x} {:x}", stack_from, stack_to);
+
+            println!("Heap:");
+
+            let mut heap_from = usize::MAX;
+            let mut heap_to = 0;
+            for c in heap_re.captures_iter(&str) {
+                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
+                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
+
+                heap_from = heap_from.min(from);
+                heap_to = heap_to.max(to);
+            }
+            println!("{:x} {:x}", heap_from, heap_to);
         }
         Command::Dump { pid, output } => {
             let file = OpenOptions::new()
@@ -249,7 +288,8 @@ fn main() {
             waitpid(pid, None).unwrap();
 
             // Set option to stop execution at exec
-            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACEEXEC).expect("Error when setting ptrace option");
+            ptrace::setoptions(pid, ptrace::Options::PTRACE_O_TRACEEXEC)
+                .expect("Error when setting ptrace option");
 
             // Continue the execution of the child
             ptrace::cont(pid, None).unwrap();
