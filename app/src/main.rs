@@ -144,39 +144,14 @@ fn main() {
             println!("{:#x?}", data);
         }
         Command::ReadMem { pid } => {
-            let stack_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[stack\]\n").unwrap();
-            let heap_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[heap\]\n").unwrap();
+            let (stack_from, stack_to) = get_mem_region_limits(Pid::from_raw(pid as i32), "stack");
 
-            let mut map =
-                File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
-
-            let mut str = String::new();
-            map.read_to_string(&mut str)
-                .expect("Failed to read maps file");
-
-            let mut stack_from = usize::MAX;
-            let mut stack_to = 0;
             println!("Stack:");
-            for c in stack_re.captures_iter(&str) {
-                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
-                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
-
-                stack_from = stack_from.min(from);
-                stack_to = stack_to.max(to);
-            }
             println!("{:x} {:x}", stack_from, stack_to);
 
+            let (heap_from, heap_to) = get_mem_region_limits(Pid::from_raw(pid as i32), "heap");
+
             println!("Heap:");
-
-            let mut heap_from = usize::MAX;
-            let mut heap_to = 0;
-            for c in heap_re.captures_iter(&str) {
-                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
-                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
-
-                heap_from = heap_from.min(from);
-                heap_to = heap_to.max(to);
-            }
             println!("{:x} {:x}", heap_from, heap_to);
         }
         Command::Dump { pid, output } => {
@@ -234,48 +209,9 @@ fn main() {
                 stack: vec![],
             };
 
-            let stack_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[stack\]\n").unwrap();
-            let heap_re = Regex::new(r"([0-9a-f]+)-([0-9a-f]+).*\[heap\]\n").unwrap();
+            read_mem_region(Pid::from_raw(pid as i32), "stack", &mut data.stack);
 
-            let mut map =
-                File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
-
-            let mut str = String::new();
-            map.read_to_string(&mut str)
-                .expect("Failed to read maps file");
-
-            let mut stack_from = usize::MAX;
-            let mut stack_to = 0;
-            println!("Stack:");
-            for c in stack_re.captures_iter(&str) {
-                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
-                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
-
-                stack_from = stack_from.min(from);
-                stack_to = stack_to.max(to);
-            }
-            println!("{:x} {:x}", stack_from, stack_to);
-
-            println!("Heap:");
-
-            let mut heap_from = usize::MAX;
-            let mut heap_to = 0;
-            for c in heap_re.captures_iter(&str) {
-                let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
-                let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
-
-                heap_from = heap_from.min(from);
-                heap_to = heap_to.max(to);
-            }
-            println!("{:x} {:x}", heap_from, heap_to);
-
-            let mut mem =
-                File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
-            mem.seek(std::io::SeekFrom::Start(stack_from as u64))
-                .unwrap();
-
-            data.stack.resize(stack_to - stack_from, 0);
-            mem.read_exact(data.stack.as_mut_slice()).unwrap();
+            // read_mem_region(pid, "stack", &mut data.heap);
 
             std::fs::File::create(output)
                 .expect("Failed to create output file")
@@ -287,19 +223,6 @@ fn main() {
                 .expect("Failed to write to output file");
         }
         Command::Restore { dump } => {
-            /* let cmd = unsafe {
-                process::Command::new(exe)
-                    .pre_exec(|| {
-                        println!("Pre-exec");
-                        ptrace::traceme().expect("Failed to ptrace traceme");
-                        thread::sleep(Duration::from_secs(5));
-                        println!("Post-exec");
-                        Ok(())
-                    })
-                    .spawn()
-                    .expect("Failed to kill process")
-            }; */
-
             let dump = {
                 let mut bytes = vec![];
                 std::fs::File::open(dump)
@@ -375,6 +298,8 @@ fn main() {
 
             ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
+            write_mem_region(pid, "stack", &dump.stack);
+
             ptrace::cont(pid, None).unwrap();
 
             let status = waitpid(pid, None).unwrap();
@@ -401,4 +326,63 @@ fn find_main_address(exe: &str) -> i32 {
         .as_str();
 
     i32::from_str_radix(main_address, 16).unwrap()
+}
+
+fn get_mem_region_limits(pid: Pid, region_name: &str) -> (usize, usize) {
+    let mut map = File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
+
+    let mut str = String::new();
+    map.read_to_string(&mut str)
+        .expect("Failed to read maps file");
+
+    let mut region_from = usize::MAX;
+    let mut region_to = 0;
+
+    let region_re =
+        Regex::new(format!(r"([0-9a-f]+)-([0-9a-f]+).*\[{}\]\n", region_name).as_str()).unwrap();
+
+    for c in region_re.captures_iter(&str) {
+        let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
+        let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
+
+        region_from = region_from.min(from);
+        region_to = region_to.max(to);
+    }
+    (region_from, region_to)
+}
+
+fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) {
+    println!("{}:", region_name);
+
+    let (region_from, region_to) = get_mem_region_limits(pid, region_name);
+
+    println!("{:x} {:x}", region_from, region_to);
+
+    let mut mem = File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
+    mem.seek(std::io::SeekFrom::Start(region_from as u64))
+        .unwrap();
+
+    data.resize(region_to - region_from, 0);
+    mem.read_exact(data.as_mut_slice()).unwrap();
+}
+
+fn write_mem_region(pid: Pid, region_name: &str, data: &Vec<u8>) {
+    let (mut region_from, _) = get_mem_region_limits(pid, region_name);
+
+    let data_i64: Vec<i64> = data
+    .chunks(8) // Create chunks of 8 elements
+    .map(|chunk| {
+        // Merge up to 8 u8 into a single i64
+        let mut value: i64 = 0;
+        for (i, &byte) in chunk.iter().enumerate() {
+            value |= (byte as i64) << (8 * (7 - i)); // Shift bytes to their correct position
+        }
+        value
+    })
+    .collect();
+
+    for word in data_i64 {
+        ptrace::write(pid, region_from as *mut libc::c_void, word).expect("Failed to write in memory");
+        region_from += 1;
+    }
 }
