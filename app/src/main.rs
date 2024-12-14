@@ -367,7 +367,10 @@ fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) {
 }
 
 fn write_mem_region(pid: Pid, region_name: &str, data: &Vec<u8>) {
-    let (mut region_from, _) = get_mem_region_limits(pid, region_name);
+    // TODO use addresses of old pid process and not the new one !!
+    let (mut region_from, region_to) = get_mem_region_limits(pid, region_name);
+
+    println!("write {} bytes in region 0x{:x} to 0x{:x} ({})", data.len(), region_from, region_to, region_name);
 
     let data_i64: Vec<i64> = data
     .chunks(8) // Create chunks of 8 elements
@@ -383,6 +386,6 @@ fn write_mem_region(pid: Pid, region_name: &str, data: &Vec<u8>) {
 
     for word in data_i64 {
         ptrace::write(pid, region_from as *mut libc::c_void, word).expect("Failed to write in memory");
-        region_from += 1;
+        region_from += 8;
     }
 }
