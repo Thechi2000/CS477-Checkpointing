@@ -140,19 +140,37 @@ fn main() {
         }
         Command::PtraceRestore { pid, dump} => {
             let pid = Pid::from_raw(pid as i32);
-            stop_with_ptrace(pid);
+            let call_instr = stop_with_ptrace(pid);
+
             dump_with_ptrace(pid, dump.clone());
             restore_from_dump(dump);
+
+            ptrace::write(pid, 0x401504 as *mut libc::c_void, call_instr).expect("failed to write back call instruction");
             ptrace::cont(pid, None).expect("failed to continue process");
         }
     }
 }
 
-fn stop_with_ptrace(pid: Pid) {
+fn stop_with_ptrace(pid: Pid) -> i64 {
+    // ptrace attache to the process
     ptrace::attach(pid).expect("failed to seize process");
     waitpid(pid, None).unwrap();
 
     println!("process attached !");
+
+    // replace the call instruction with an interrupt
+    let call_addr = 0x401504 as *mut libc::c_void;
+    let call_instr = ptrace::read(pid, call_addr).expect("failed to read process");
+
+    println!("instruction read !");
+
+    ptrace::write(pid, call_addr, INT3).expect("failed to write interrupt instruction");
+
+    // restart process and wait for interrupt
+    ptrace::cont(pid, None).expect("failed to continue process");
+    waitpid(pid, None).unwrap();
+
+    call_instr as i64
 }
 
 fn dump_with_ptrace(pid: Pid, to: String) {
@@ -193,7 +211,7 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         stack_from: 0,
         stack: vec![],
     };
-    
+
     let stack_from = read_mem_region(pid, "stack", &mut data.stack);
     data.stack_from = stack_from;
 
