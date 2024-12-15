@@ -151,6 +151,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     probe.rdi = regs->di;
     probe.cs = regs->cs;
 
+    // TODO: find a way to get the correct values
     //probe.ds = regs->ds;
     probe.ds = 0;
     //probe.es = regs->es;
