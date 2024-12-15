@@ -35,6 +35,7 @@ struct ProbeRaw {
     rip: u64,
     rsp: u64,
     rbp: u64,
+    rdi: u64,
     ss: u64,
     exe: [u8; 4096],
 }
@@ -56,6 +57,7 @@ struct Probe {
     rip: u64,
     rsp: u64,
     rbp: u64,
+    rdi: u64,
     ss: u64,
     exe: String,
     stack_from: u64,
@@ -117,6 +119,7 @@ fn main() {
                 rip: 0,
                 rsp: 0,
                 rbp: 0,
+                rdi: 0,
                 ss: 0,
                 exe: [0; 4096],
             };
@@ -149,6 +152,7 @@ fn main() {
                 rip: data.rip,
                 rsp: data.rsp,
                 rbp: data.rbp,
+                rdi: data.rdi,
                 ss: data.ss,
                 exe,
                 stack_from: 0,
@@ -193,6 +197,7 @@ fn main() {
                 rip: 0,
                 rsp: 0,
                 rbp: 0,
+                rdi: 0,
                 ss: 0,
                 exe: [0; 4096],
             };
@@ -227,6 +232,7 @@ fn main() {
                 rip: data.rip,
                 rsp: data.rsp,
                 rbp: data.rbp,
+                rdi: data.rdi,
                 ss: data.ss,
                 exe,
                 stack_from: stack_from as u64,
@@ -311,16 +317,11 @@ fn main() {
             regs.r13 = dump.r13;
             regs.r14 = dump.r14;
             regs.r15 = dump.r15;
-
-            // TODO: needs an offset ?
-            // https://stackoverflow.com/questions/38006277/weird-behavior-setting-rip-with-ptrace
-            // dmesg (when restoring rip to 00007ffff7e203f4):
-            // [45434.139862] test[316473]: segfault at 7ffff7e203f4 ip 00007ffff7e203f4 sp 00007ffc7128d7b0 error 14 likely on CPU 4 (core 0, socket 0)
-            // [45434.139874] Code: Unable to access opcode bytes at 0x7ffff7e203ca.
             regs.rip = dump.rip;
             regs.rsp = dump.rsp;
             regs.rbp = dump.rbp;
             regs.ss = dump.ss;
+            regs.rdi = dump.rdi;
 
             ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
