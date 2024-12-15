@@ -35,6 +35,7 @@ typedef struct {
   uint64_t rip;
   uint64_t rsp;
   uint64_t rbp;
+  uint64_t ss;
   char exe[PATH_MAX];
 } regs_t;
 

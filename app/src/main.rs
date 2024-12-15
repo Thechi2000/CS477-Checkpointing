@@ -35,6 +35,7 @@ struct ProbeRaw {
     rip: u64,
     rsp: u64,
     rbp: u64,
+    ss: u64,
     exe: [u8; 4096],
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,6 +56,7 @@ struct Probe {
     rip: u64,
     rsp: u64,
     rbp: u64,
+    ss: u64,
     exe: String,
     stack_from: u64,
     stack: Vec<u8>,
@@ -115,6 +117,7 @@ fn main() {
                 rip: 0,
                 rsp: 0,
                 rbp: 0,
+                ss: 0,
                 exe: [0; 4096],
             };
 
@@ -146,6 +149,7 @@ fn main() {
                 rip: data.rip,
                 rsp: data.rsp,
                 rbp: data.rbp,
+                ss: data.ss,
                 exe,
                 stack_from: 0,
                 stack: vec![],
@@ -189,6 +193,7 @@ fn main() {
                 rip: 0,
                 rsp: 0,
                 rbp: 0,
+                ss: 0,
                 exe: [0; 4096],
             };
 
@@ -222,6 +227,7 @@ fn main() {
                 rip: data.rip,
                 rsp: data.rsp,
                 rbp: data.rbp,
+                ss: data.ss,
                 exe,
                 stack_from: stack_from as u64,
                 stack: vec![],
@@ -314,6 +320,7 @@ fn main() {
             regs.rip = dump.rip;
             regs.rsp = dump.rsp;
             regs.rbp = dump.rbp;
+            regs.ss = dump.ss;
 
             ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
