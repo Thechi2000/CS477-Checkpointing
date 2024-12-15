@@ -191,7 +191,7 @@ fn main() {
                     .unwrap()
                     .to_owned();
             }
-            
+
             let (stack_from, _) = get_mem_region_limits(Pid::from_raw(pid as i32), "stack");
 
             let mut data = Probe {
@@ -370,20 +370,25 @@ fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) {
     mem.read_exact(data.as_mut_slice()).unwrap();
 }
 
-fn write_mem_region(pid: Pid, mut from: u64, data: &Vec<u8> ) {
-    println!("write {} bytes in region 0x{:x} to 0x{:x}", data.len(), from, from + data.len() as u64);
+fn write_mem_region(pid: Pid, mut from: u64, data: &Vec<u8>) {
+    println!(
+        "write {} bytes in region 0x{:x} to 0x{:x}",
+        data.len(),
+        from,
+        from + data.len() as u64
+    );
 
     let data_i64: Vec<i64> = data
-    .chunks(8) // Create chunks of 8 elements
-    .map(|chunk| {
-        // Merge up to 8 u8 into a single i64
-        let mut value: i64 = 0;
-        for (i, &byte) in chunk.iter().enumerate() {
-            value |= (byte as i64) << (8 * (7 - i)); // Shift bytes to their correct position
-        }
-        value
-    })
-    .collect();
+        .chunks(8) // Create chunks of 8 elements
+        .map(|chunk| {
+            // Merge up to 8 u8 into a single i64
+            let mut value: i64 = 0;
+            for (i, &byte) in chunk.iter().enumerate() {
+                value |= (byte as i64) << (8 * (7 - i)); // Shift bytes to their correct position
+            }
+            value
+        })
+        .collect();
 
     for word in data_i64 {
         ptrace::write(pid, from as *mut libc::c_void, word).expect("Failed to write in memory");
