@@ -8,6 +8,7 @@ use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{env, ffi::CStr, fs::{self, File, OpenOptions}, io::{Read, Seek, Write}, os::fd::AsRawFd};
+use std::ffi::c_void;
 
 const INT3: i64 = 0xcc;
 
@@ -140,18 +141,23 @@ fn main() {
         }
         Command::PtraceRestore { pid, dump} => {
             let pid = Pid::from_raw(pid as i32);
-            let call_instr = stop_with_ptrace(pid);
+
+            let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
+            // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
+            // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
+
+            let call_instr = stop_with_ptrace(pid, stop_addr);
 
             dump_with_ptrace(pid, dump.clone());
             restore_from_dump(dump);
 
-            ptrace::write(pid, 0x401504 as *mut libc::c_void, call_instr).expect("failed to write back call instruction");
+            ptrace::write(pid, stop_addr, call_instr).expect("failed to write back call instruction");
             ptrace::cont(pid, None).expect("failed to continue process");
         }
     }
 }
 
-fn stop_with_ptrace(pid: Pid) -> i64 {
+fn stop_with_ptrace(pid: Pid, stop_addr: *mut c_void) -> i64 {
     // ptrace attache to the process
     ptrace::attach(pid).expect("failed to seize process");
     waitpid(pid, None).unwrap();
@@ -159,12 +165,11 @@ fn stop_with_ptrace(pid: Pid) -> i64 {
     println!("process attached !");
 
     // replace the call instruction with an interrupt
-    let call_addr = 0x401504 as *mut libc::c_void;
-    let call_instr = ptrace::read(pid, call_addr).expect("failed to read process");
+    let call_instr = ptrace::read(pid, stop_addr).expect("failed to read process");
 
     println!("instruction read !");
 
-    ptrace::write(pid, call_addr, INT3).expect("failed to write interrupt instruction");
+    ptrace::write(pid, stop_addr, INT3).expect("failed to write interrupt instruction");
 
     // restart process and wait for interrupt
     ptrace::cont(pid, None).expect("failed to continue process");
