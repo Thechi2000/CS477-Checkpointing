@@ -6,6 +6,9 @@ all:
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 
-install: all
+install:
+	sudo insmod get-tasks.ko
+
+reinstall: all
 	sudo rmmod get-tasks.ko
 	sudo insmod get-tasks.ko
