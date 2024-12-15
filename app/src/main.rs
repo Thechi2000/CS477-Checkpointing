@@ -34,6 +34,7 @@ struct ProbeRaw {
     r15: u64,
     rip: u64,
     rsp: u64,
+    rbp: u64,
     exe: [u8; 4096],
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +54,7 @@ struct Probe {
     r15: u64,
     rip: u64,
     rsp: u64,
+    rbp: u64,
     exe: String,
     stack_from: u64,
     stack: Vec<u8>,
@@ -112,6 +114,7 @@ fn main() {
                 r15: 0,
                 rip: 0,
                 rsp: 0,
+                rbp: 0,
                 exe: [0; 4096],
             };
 
@@ -142,6 +145,7 @@ fn main() {
                 r15: data.r15,
                 rip: data.rip,
                 rsp: data.rsp,
+                rbp: data.rbp,
                 exe,
                 stack_from: 0,
                 stack: vec![],
@@ -184,6 +188,7 @@ fn main() {
                 r15: 0,
                 rip: 0,
                 rsp: 0,
+                rbp: 0,
                 exe: [0; 4096],
             };
 
@@ -216,6 +221,7 @@ fn main() {
                 r15: data.r15,
                 rip: data.rip,
                 rsp: data.rsp,
+                rbp: data.rbp,
                 exe,
                 stack_from: stack_from as u64,
                 stack: vec![],
@@ -307,6 +313,7 @@ fn main() {
             // [45434.139874] Code: Unable to access opcode bytes at 0x7ffff7e203ca.
             regs.rip = dump.rip;
             regs.rsp = dump.rsp;
+            regs.rbp = dump.rbp;
 
             ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
