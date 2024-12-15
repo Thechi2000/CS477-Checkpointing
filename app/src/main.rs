@@ -51,6 +51,7 @@ struct Probe {
     r15: u64,
     rip: u64,
     exe: String,
+    stack_from: u64,
     stack: Vec<u8>,
 }
 
@@ -137,6 +138,7 @@ fn main() {
                 r15: data.r15,
                 rip: data.rip,
                 exe,
+                stack_from: 0,
                 stack: vec![],
             };
 
@@ -189,6 +191,8 @@ fn main() {
                     .unwrap()
                     .to_owned();
             }
+            
+            let (stack_from, _) = get_mem_region_limits(Pid::from_raw(pid as i32), "stack");
 
             let mut data = Probe {
                 pid: data.pid,
@@ -206,6 +210,7 @@ fn main() {
                 r15: data.r15,
                 rip: data.rip,
                 exe,
+                stack_from: stack_from as u64,
                 stack: vec![],
             };
 
@@ -298,7 +303,8 @@ fn main() {
 
             ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
-            write_mem_region(pid, "stack", &dump.stack);
+            println!("Write stack (from 0x{:x})", dump.stack_from);
+            write_mem_region(pid, dump.stack_from, &dump.stack);
 
             ptrace::cont(pid, None).unwrap();
 
@@ -352,11 +358,9 @@ fn get_mem_region_limits(pid: Pid, region_name: &str) -> (usize, usize) {
 }
 
 fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) {
-    println!("{}:", region_name);
-
     let (region_from, region_to) = get_mem_region_limits(pid, region_name);
 
-    println!("{:x} {:x}", region_from, region_to);
+    println!("Read {} ({:x}-{:x})", region_name, region_from, region_to);
 
     let mut mem = File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
     mem.seek(std::io::SeekFrom::Start(region_from as u64))
@@ -366,11 +370,8 @@ fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) {
     mem.read_exact(data.as_mut_slice()).unwrap();
 }
 
-fn write_mem_region(pid: Pid, region_name: &str, data: &Vec<u8>) {
-    // TODO use addresses of old pid process and not the new one !!
-    let (mut region_from, region_to) = get_mem_region_limits(pid, region_name);
-
-    println!("write {} bytes in region 0x{:x} to 0x{:x} ({})", data.len(), region_from, region_to, region_name);
+fn write_mem_region(pid: Pid, mut from: u64, data: &Vec<u8> ) {
+    println!("write {} bytes in region 0x{:x} to 0x{:x}", data.len(), from, from + data.len() as u64);
 
     let data_i64: Vec<i64> = data
     .chunks(8) // Create chunks of 8 elements
@@ -385,7 +386,7 @@ fn write_mem_region(pid: Pid, region_name: &str, data: &Vec<u8>) {
     .collect();
 
     for word in data_i64 {
-        ptrace::write(pid, region_from as *mut libc::c_void, word).expect("Failed to write in memory");
-        region_from += 8;
+        ptrace::write(pid, from as *mut libc::c_void, word).expect("Failed to write in memory");
+        from += 8;
     }
 }
