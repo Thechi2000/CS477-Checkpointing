@@ -8,6 +8,7 @@ use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{env, ffi::CStr, fs::{self, File, OpenOptions}, io::{Read, Seek, Write}, os::fd::AsRawFd};
+use std::ffi::c_void;
 
 const INT3: i64 = 0xcc;
 
@@ -104,6 +105,10 @@ enum Command {
     Restore {
         dump: String,
     },
+    PtraceRestore {
+        pid: u64,
+        dump: String,
+    },
 }
 
 fn main() {
@@ -134,7 +139,95 @@ fn main() {
         Command::Restore { dump } => {
             restore_from_dump(dump);
         }
+        Command::PtraceRestore { pid, dump} => {
+            let pid = Pid::from_raw(pid as i32);
+
+            let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
+            // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
+            // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
+
+            let call_instr = stop_with_ptrace(pid, stop_addr);
+
+            dump_with_ptrace(pid, dump.clone());
+            restore_from_dump(dump);
+
+            ptrace::write(pid, stop_addr, call_instr).expect("failed to write back call instruction");
+            ptrace::cont(pid, None).expect("failed to continue process");
+        }
     }
+}
+
+fn stop_with_ptrace(pid: Pid, stop_addr: *mut c_void) -> i64 {
+    // ptrace attache to the process
+    ptrace::attach(pid).expect("failed to seize process");
+    waitpid(pid, None).unwrap();
+
+    println!("process attached !");
+
+    // replace the call instruction with an interrupt
+    let call_instr = ptrace::read(pid, stop_addr).expect("failed to read process");
+
+    println!("instruction read !");
+
+    ptrace::write(pid, stop_addr, INT3).expect("failed to write interrupt instruction");
+
+    // restart process and wait for interrupt
+    ptrace::cont(pid, None).expect("failed to continue process");
+    waitpid(pid, None).unwrap();
+
+    call_instr as i64
+}
+
+fn dump_with_ptrace(pid: Pid, to: String) {
+    let exe = fs::read_link(format!("/proc/{}/exe", pid))
+        .expect("failed to read exe name").into_os_string().into_string()
+        .expect("failed to convert exe name to string");
+
+    println!("exe: {}", exe);
+
+    let regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
+
+    let mut data = Probe{
+        pid: pid.as_raw() as u64,
+        rax: regs.rax,
+        rbx: regs.rbx,
+        rcx: regs.rcx,
+        rdx: regs.rdx,
+        r8: regs.r8,
+        r9: regs.r9,
+        r10: regs.r10,
+        r11: regs.r11,
+        r12: regs.r12,
+        r13: regs.r13,
+        r14: regs.r14,
+        r15: regs.r15,
+        rip: regs.rip,
+        rsp: regs.rsp,
+        rbp: regs.rbp,
+        ss: regs.ss,
+        rsi: regs.rsi,
+        rdi: regs.rdi,
+        cs: regs.cs,
+        ds: regs.ds,
+        es: regs.es,
+        fs: regs.fs,
+        gs: regs.gs,
+        exe,
+        stack_from: 0,
+        stack: vec![],
+    };
+
+    let stack_from = read_mem_region(pid, "stack", &mut data.stack);
+    data.stack_from = stack_from;
+
+    File::create(to)
+        .expect("Failed to create output file")
+        .write_all(
+            postcard::to_allocvec(&data)
+                .expect("Failed to serialize data")
+                .as_slice(),
+        )
+        .expect("Failed to write to output file");
 }
 
 fn dump_pid(pid: u64, to: String) {
