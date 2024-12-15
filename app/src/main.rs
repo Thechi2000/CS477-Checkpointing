@@ -4,11 +4,12 @@ use nix::{
     sys::{ptrace, wait::waitpid},
     unistd::Pid,
 };
+use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::CStr,
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{Read, Seek, Write},
     os::fd::AsRawFd,
 };
@@ -32,6 +33,7 @@ struct ProbeRaw {
     r14: u64,
     r15: u64,
     rip: u64,
+    rsp: u64,
     exe: [u8; 4096],
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +52,7 @@ struct Probe {
     r14: u64,
     r15: u64,
     rip: u64,
+    rsp: u64,
     exe: String,
     stack_from: u64,
     stack: Vec<u8>,
@@ -108,6 +111,7 @@ fn main() {
                 r14: 0,
                 r15: 0,
                 rip: 0,
+                rsp: 0,
                 exe: [0; 4096],
             };
 
@@ -137,6 +141,7 @@ fn main() {
                 r14: data.r14,
                 r15: data.r15,
                 rip: data.rip,
+                rsp: data.rsp,
                 exe,
                 stack_from: 0,
                 stack: vec![],
@@ -178,6 +183,7 @@ fn main() {
                 r14: 0,
                 r15: 0,
                 rip: 0,
+                rsp: 0,
                 exe: [0; 4096],
             };
 
@@ -209,6 +215,7 @@ fn main() {
                 r14: data.r14,
                 r15: data.r15,
                 rip: data.rip,
+                rsp: data.rsp,
                 exe,
                 stack_from: stack_from as u64,
                 stack: vec![],
@@ -243,7 +250,6 @@ fn main() {
                 use libc::*;
 
                 pid = fork();
-                println!("{}", pid);
                 if pid == 0 {
                     ptrace::traceme().expect("Failed to ptrace traceme");
 
@@ -300,6 +306,7 @@ fn main() {
             // [45434.139862] test[316473]: segfault at 7ffff7e203f4 ip 00007ffff7e203f4 sp 00007ffc7128d7b0 error 14 likely on CPU 4 (core 0, socket 0)
             // [45434.139874] Code: Unable to access opcode bytes at 0x7ffff7e203ca.
             regs.rip = dump.rip;
+            regs.rsp = dump.rsp;
 
             ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
@@ -315,23 +322,19 @@ fn main() {
 }
 
 fn find_main_address(exe: &str) -> i32 {
-    let re = Regex::new("(\\d+) . main\n").unwrap();
 
-    let nm_output = std::process::Command::new("nm")
-        .arg(exe)
-        .output()
-        .expect("Failed to run nm");
+    // Read the binary file
+    let binary = fs::read(exe).expect("Failed to read the binary file");
 
-    let nm_output = String::from_utf8(nm_output.stdout).unwrap();
-
-    let main_address = re
-        .captures(&nm_output)
+    // Parse the binary object
+    let main_address = object::File::parse(&*binary)
+        .expect("Failed to parse the executable")
+        .symbols()
+        .find(|s| s.name() == Ok("main"))
         .expect("Failed to find main address")
-        .get(1)
-        .unwrap()
-        .as_str();
+        .address();
 
-    i32::from_str_radix(main_address, 16).unwrap()
+    main_address as i32
 }
 
 fn get_mem_region_limits(pid: Pid, region_name: &str) -> (usize, usize) {
@@ -372,7 +375,7 @@ fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) {
 
 fn write_mem_region(pid: Pid, mut from: u64, data: &Vec<u8>) {
     println!(
-        "write {} bytes in region 0x{:x} to 0x{:x}",
+        "Write {} bytes in region 0x{:x} to 0x{:x}",
         data.len(),
         from,
         from + data.len() as u64
