@@ -104,6 +104,10 @@ enum Command {
     Restore {
         dump: String,
     },
+    PtraceRestore {
+        pid: u64,
+        dump: String,
+    },
 }
 
 fn main() {
@@ -134,7 +138,73 @@ fn main() {
         Command::Restore { dump } => {
             restore_from_dump(dump);
         }
+        Command::PtraceRestore { pid, dump} => {
+            let pid = Pid::from_raw(pid as i32);
+            stop_with_ptrace(pid);
+            dump_with_ptrace(pid, dump.clone());
+            restore_from_dump(dump);
+            ptrace::cont(pid, None).expect("failed to continue process");
+        }
     }
+}
+
+fn stop_with_ptrace(pid: Pid) {
+    ptrace::attach(pid).expect("failed to seize process");
+    waitpid(pid, None).unwrap();
+
+    println!("process attached !");
+}
+
+fn dump_with_ptrace(pid: Pid, to: String) {
+    let exe = fs::read_link(format!("/proc/{}/exe", pid))
+        .expect("failed to read exe name").into_os_string().into_string()
+        .expect("failed to convert exe name to string");
+
+    println!("exe: {}", exe);
+
+    let regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
+
+    let mut data = Probe{
+        pid: pid.as_raw() as u64,
+        rax: regs.rax,
+        rbx: regs.rbx,
+        rcx: regs.rcx,
+        rdx: regs.rdx,
+        r8: regs.r8,
+        r9: regs.r9,
+        r10: regs.r10,
+        r11: regs.r11,
+        r12: regs.r12,
+        r13: regs.r13,
+        r14: regs.r14,
+        r15: regs.r15,
+        rip: regs.rip,
+        rsp: regs.rsp,
+        rbp: regs.rbp,
+        ss: regs.ss,
+        rsi: regs.rsi,
+        rdi: regs.rdi,
+        cs: regs.cs,
+        ds: regs.ds,
+        es: regs.es,
+        fs: regs.fs,
+        gs: regs.gs,
+        exe,
+        stack_from: 0,
+        stack: vec![],
+    };
+    
+    let stack_from = read_mem_region(pid, "stack", &mut data.stack);
+    data.stack_from = stack_from;
+
+    File::create(to)
+        .expect("Failed to create output file")
+        .write_all(
+            postcard::to_allocvec(&data)
+                .expect("Failed to serialize data")
+                .as_slice(),
+        )
+        .expect("Failed to write to output file");
 }
 
 fn dump_pid(pid: u64, to: String) {
