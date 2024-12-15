@@ -5,5 +5,9 @@
 *.order
 *.o
 
+a.out
+*.proc
+
 .vscode
 app/target
+**.idea

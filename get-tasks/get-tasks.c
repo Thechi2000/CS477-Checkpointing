@@ -35,8 +35,14 @@ typedef struct {
   uint64_t rip;
   uint64_t rsp;
   uint64_t rbp;
-  uint64_t rdi;
   uint64_t ss;
+  uint64_t rsi;
+  uint64_t rdi;
+  uint64_t cs;
+  uint64_t ds;
+  uint64_t es;
+  uint64_t fs;
+  uint64_t gs;
   char exe[PATH_MAX];
 } regs_t;
 
@@ -140,8 +146,20 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     probe.rip = regs->ip;
     probe.rsp = regs->sp;
     probe.rbp = regs->bp;
-    probe.rdi = regs->di;
     probe.ss = regs->ss;
+    probe.rsi = regs->si;
+    probe.rdi = regs->di;
+    probe.cs = regs->cs;
+
+    // TODO: find a way to get the correct values
+    //probe.ds = regs->ds;
+    probe.ds = 0;
+    //probe.es = regs->es;
+    probe.es = 0;
+    //probe.fs = regs->fs;
+    probe.fs = 0;
+    //probe.gs = regs->gs;
+    probe.gs = 0;
 
     if (copy_to_user((regs_t *)arg, &probe, sizeof(regs_t))) {
       pr_err("Failed to write results for task %d\n", 1);
