@@ -82,7 +82,7 @@ fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let cli = Cli::parse();
 
-    let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
+    let stop_addr = 0x401634 as *mut libc::c_void; // stops in main loop for hello-world
     // let stop_addr = 0x401516 as *mut libc::c_void; // stops in main loop for hello-world
     // let stop_addr = 0x401650 as *mut c_void; // stops in function body for hello-world-func.c
     // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
@@ -103,8 +103,8 @@ fn main() {
             stop_with_ptrace(pid, stop_addr);
             dump_with_ptrace(pid, dump.clone());
 
-            restore_from_dump(dump);
             ptrace::kill(pid).expect("failed to kill processed");
+            restore_from_dump(dump);
         }
     }
 }
@@ -160,11 +160,11 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         gs: regs.gs,
         eflags: regs.eflags,
         exe,
-        regions: dump_regions(pid.as_raw() as u64),
+        regions: dump_regions(pid.as_raw() as u64, 0),
     };
 
     println!("registers: {:#?}", regs);
-    print_mem(pid, data.rsp - 4*8, 8);
+    print_mem(pid, data.rsp, 8);
 
     File::create(to)
         .expect("Failed to create output file")
@@ -227,7 +227,7 @@ fn restore_from_dump(dump: String) {
     ptrace::cont(pid, None).unwrap();
 
     waitpid(pid, None).unwrap();
-    // ptrace::write(pid,  main_start, old_instr).unwrap(); // restore back old instruction
+    ptrace::write(pid,  main_start, old_instr).unwrap(); // restore back old instruction
 
     // Restores registers of the child
     let mut regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
@@ -245,8 +245,8 @@ fn restore_from_dump(dump: String) {
     regs.r14 = dump.r14;
     regs.r15 = dump.r15;
 
-    regs.rip = dump.rip;
-    regs.rsp = dump.rsp;// + 3 * 8;
+    regs.rip = 0x401634; //dump.rip;
+    regs.rsp = dump.rsp;
     regs.rbp = dump.rbp;
     regs.ss = dump.ss;
     regs.rsi = dump.rsi;
@@ -264,11 +264,11 @@ fn restore_from_dump(dump: String) {
     println!("registers after restore: {:#?}", regs);
 
     // Restores stack of the child
-    // for region in dump.regions {
-    //     write_mem_region(pid, region.from, &region.data);
-    // }
+    for region in dump.regions {
+        write_mem_region(pid, region.from, &region.data);
+    }
 
-    // print_mem(pid, dump.rsp - 4*8, 8);
+    print_mem(pid, dump.rsp, 8);
 
     ptrace::cont(pid, None).unwrap();
 
@@ -292,12 +292,12 @@ fn find_main_address(exe: &str) -> i32 {
 }
 
 fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
-    // println!(
-    //     "Write {} bytes in region 0x{:x} to 0x{:x}",
-    //     data.len(),
-    //     from,
-    //     from + data.len() as u64
-    // );
+    println!(
+        "Write {} bytes in region 0x{:x} to 0x{:x}",
+        data.len(),
+        from,
+        from + data.len() as u64
+    );
 
     let data_i64: Vec<i64> = data
         .chunks(8) // Create chunks of 8 elements
@@ -307,6 +307,7 @@ fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
             for (i, &byte) in chunk.iter().enumerate() {
                 value |= (byte as i64) << (8 * (7 - i)); // Shift bytes to their correct position
             }
+            value = reverse_bytes(value);
             value
         })
         .collect();
@@ -317,14 +318,14 @@ fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
     }
 }
 
-fn dump_regions(pid: u64) -> Vec<Region> {
+fn dump_regions(pid: u64, sp: u64) -> Vec<Region> {
     let map = File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
 
     let mut regions = vec![];
 
     for line in std::io::BufReader::new(map).lines() {
         let line = line.expect("Failed to read line");
-        if let Some(region) = dump_region(&line, pid) {
+        if let Some(region) = dump_region(&line, pid, sp) {
             regions.push(region);
         }
     }
@@ -332,7 +333,7 @@ fn dump_regions(pid: u64) -> Vec<Region> {
     regions
 }
 
-fn dump_region(line: &str, pid: u64) -> Option<Region> {
+fn dump_region(line: &str, pid: u64, lower_limit: u64) -> Option<Region> {
     let regex = Regex::new(r"^([0-9a-f]+)-([0-9a-f]+) [r-]([w-])[x-][p-].*\s(.*)").unwrap();
     let captures = regex.captures(line).unwrap();
 
@@ -340,9 +341,14 @@ fn dump_region(line: &str, pid: u64) -> Option<Region> {
     let name = captures.get(4).unwrap().as_str().to_owned();
     if ["[vvar]", "[vdso]", "[vsyscall]"].contains(&name.as_str()) || !is_writable {
         return None;
+    } else if !["[stack]"].contains(&name.as_str()) {
+        return None;
     }
 
-    let from = u64::from_str_radix(captures.get(1).unwrap().as_str(), 16).unwrap();
+    let mut from = u64::from_str_radix(captures.get(1).unwrap().as_str(), 16).unwrap();
+    if lower_limit > 0 {
+        from = lower_limit
+    }
     let to = u64::from_str_radix(captures.get(2).unwrap().as_str(), 16).unwrap();
 
     println!("Saving region {} (0x{:x}-0x{:x})", name, from, to);
