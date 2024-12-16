@@ -20,6 +20,7 @@ const INT3: i64 = 0xcc;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Region {
+    name: String,
     from: u64,
     data: Vec<u8>,
 }
@@ -497,21 +498,30 @@ fn dump_regions(pid: u64) -> Vec<Region> {
 
     for line in std::io::BufReader::new(map).lines() {
         let line = line.expect("Failed to read line");
-        regions.push(dump_region(&line));
+        if let Some(region) = dump_region(&line, pid) {
+            regions.push(region);
+        }
     }
 
     regions
 }
 
-fn dump_region(line: &str) -> Region {
-    let regex = Regex::new(r"^([0-9a-f]+)-([0-9a-f]+)").unwrap();
+fn dump_region(line: &str, pid: u64) -> Option<Region> {
+    let regex = Regex::new(r"^([0-9a-f]+)-([0-9a-f]+) [r-]([w-])[x-][p-].*\s(.*)").unwrap();
     let captures = regex.captures(line).unwrap();
+
+    let is_writable = captures.get(3).unwrap().as_str() == "w";
+    let name = captures.get(4).unwrap().as_str().to_owned();
+    if ["[vvar]", "[vdso]", "[vsyscall]"].contains(&name.as_str()) || !is_writable {
+        return None;
+    }
 
     let from = u64::from_str_radix(captures.get(1).unwrap().as_str(), 16).unwrap();
     let to = u64::from_str_radix(captures.get(2).unwrap().as_str(), 16).unwrap();
 
-    let mut file = File::open(format!("/proc/{}/mem", Pid::from_raw(1).as_raw()))
-        .expect("Failed to open mem file");
+    println!("Saving region {} (0x{:x}-0x{:x})", name, from, to);
+
+    let mut file = File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
     file.seek(std::io::SeekFrom::Start(from))
         .expect("Failed to seek in mem file");
 
@@ -519,5 +529,5 @@ fn dump_region(line: &str) -> Region {
     file.read_exact(data.as_mut_slice())
         .expect("Failed to read from mem file");
 
-    Region { from, data }
+    Some(Region { name, from, data })
 }
