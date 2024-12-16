@@ -7,7 +7,6 @@ use nix::{
 use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::ffi::c_void;
 use std::{
     env,
     ffi::CStr,
@@ -15,8 +14,15 @@ use std::{
     io::{Read, Seek, Write},
     os::fd::AsRawFd,
 };
+use std::{ffi::c_void, io::BufRead};
 
 const INT3: i64 = 0xcc;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Region {
+    from: usize,
+    data: Vec<u8>,
+}
 
 #[repr(C)]
 #[derive(Debug)]
@@ -105,8 +111,7 @@ struct Probe {
     fs: u64,
     gs: u64,
     exe: String,
-    stack_from: u64,
-    stack: Vec<u8>,
+    regions: Vec<Region>,
 }
 
 ioctl_readwrite!(read_regs, b'a', 1, ProbeRaw);
@@ -245,8 +250,7 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         fs: regs.fs,
         gs: regs.gs,
         exe,
-        stack_from: 0,
-        stack: vec![],
+        regions: vec![],
     };
 
     let stack_from = read_mem_region(pid, "stack", &mut data.stack);
@@ -265,8 +269,7 @@ fn dump_with_ptrace(pid: Pid, to: String) {
 fn dump_pid(pid: u64, to: String) {
     let mut data = read_regs_with_get_tasks(pid);
 
-    let stack_from = read_mem_region(Pid::from_raw(pid as i32), "stack", &mut data.stack);
-    data.stack_from = stack_from;
+    data.regions = dump_regions(pid);
 
     File::create(to)
         .expect("Failed to create output file")
@@ -502,4 +505,36 @@ fn read_regs_with_get_tasks(pid: u64) -> Probe {
         stack_from: 0,
         stack: vec![],
     }
+}
+
+fn dump_regions(pid: u64) -> Vec<Region> {
+    let map = File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
+
+    let mut regions = vec![];
+
+    for line in std::io::BufReader::new(map).lines() {
+        let line = line.expect("Failed to read line");
+        regions.push(dump_region(&line));
+    }
+
+    regions
+}
+
+fn dump_region(line: &str) -> Region {
+    let regex = Regex::new(r"^([0-9a-f]+)-([0-9a-f]+)").unwrap();
+    let captures = regex.captures(line).unwrap();
+
+    let from = usize::from_str_radix(captures.get(1).unwrap().as_str(), 16).unwrap();
+    let to = usize::from_str_radix(captures.get(2).unwrap().as_str(), 16).unwrap();
+
+    let mut file = File::open(format!("/proc/{}/mem", Pid::from_raw(1).as_raw()))
+        .expect("Failed to open mem file");
+    file.seek(std::io::SeekFrom::Start(from as u64))
+        .expect("Failed to seek in mem file");
+
+    let mut data = vec![0; to - from];
+    file.read_exact(data.as_mut_slice())
+        .expect("Failed to read from mem file");
+
+    Region { from, data }
 }
