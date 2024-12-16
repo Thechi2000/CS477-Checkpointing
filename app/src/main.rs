@@ -20,7 +20,7 @@ const INT3: i64 = 0xcc;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Region {
-    from: usize,
+    from: u64,
     data: Vec<u8>,
 }
 
@@ -224,7 +224,7 @@ fn dump_with_ptrace(pid: Pid, to: String) {
 
     let regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
 
-    let mut data = Probe {
+    let data = Probe {
         pid: pid.as_raw() as u64,
         rax: regs.rax,
         rbx: regs.rbx,
@@ -252,9 +252,6 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         exe,
         regions: vec![],
     };
-
-    let stack_from = read_mem_region(pid, "stack", &mut data.stack);
-    data.stack_from = stack_from;
 
     File::create(to)
         .expect("Failed to create output file")
@@ -366,8 +363,10 @@ fn restore_from_dump(dump: String) {
     ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
     // Restores stack of the child
-    println!("Write stack (from 0x{:x})", dump.stack_from);
-    write_mem_region(pid, dump.stack_from, &dump.stack);
+    for region in dump.regions {
+        println!("Write {} bytes at 0x{:x}", region.data.len(), region.from);
+        write_mem_region(pid, region.from, &region.data);
+    }
 
     ptrace::cont(pid, None).unwrap();
 
@@ -411,21 +410,6 @@ fn get_mem_region_limits(pid: Pid, region_name: &str) -> (usize, usize) {
         region_to = region_to.max(to);
     }
     (region_from, region_to)
-}
-
-fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) -> u64 {
-    let (region_from, region_to) = get_mem_region_limits(pid, region_name);
-
-    println!("Read {} ({:x}-{:x})", region_name, region_from, region_to);
-
-    let mut mem = File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
-    mem.seek(std::io::SeekFrom::Start(region_from as u64))
-        .unwrap();
-
-    data.resize(region_to - region_from, 0);
-    mem.read_exact(data.as_mut_slice()).unwrap();
-
-    region_from as u64
 }
 
 fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
@@ -502,8 +486,7 @@ fn read_regs_with_get_tasks(pid: u64) -> Probe {
         fs: data.fs,
         gs: data.gs,
         exe,
-        stack_from: 0,
-        stack: vec![],
+        regions: vec![],
     }
 }
 
@@ -524,15 +507,15 @@ fn dump_region(line: &str) -> Region {
     let regex = Regex::new(r"^([0-9a-f]+)-([0-9a-f]+)").unwrap();
     let captures = regex.captures(line).unwrap();
 
-    let from = usize::from_str_radix(captures.get(1).unwrap().as_str(), 16).unwrap();
-    let to = usize::from_str_radix(captures.get(2).unwrap().as_str(), 16).unwrap();
+    let from = u64::from_str_radix(captures.get(1).unwrap().as_str(), 16).unwrap();
+    let to = u64::from_str_radix(captures.get(2).unwrap().as_str(), 16).unwrap();
 
     let mut file = File::open(format!("/proc/{}/mem", Pid::from_raw(1).as_raw()))
         .expect("Failed to open mem file");
-    file.seek(std::io::SeekFrom::Start(from as u64))
+    file.seek(std::io::SeekFrom::Start(from))
         .expect("Failed to seek in mem file");
 
-    let mut data = vec![0; to - from];
+    let mut data = vec![0; (to - from) as usize];
     file.read_exact(data.as_mut_slice())
         .expect("Failed to read from mem file");
 
