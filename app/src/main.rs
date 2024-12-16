@@ -7,8 +7,14 @@ use nix::{
 use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{env, ffi::CStr, fs::{self, File, OpenOptions}, io::{Read, Seek, Write}, os::fd::AsRawFd};
 use std::ffi::c_void;
+use std::{
+    env,
+    ffi::CStr,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, Write},
+    os::fd::AsRawFd,
+};
 
 const INT3: i64 = 0xcc;
 
@@ -43,9 +49,32 @@ struct ProbeRaw {
 }
 
 fn new_empty_raw_probe() -> ProbeRaw {
-    ProbeRaw { pid: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0, r8: 0, r9: 0, r10: 0, r11: 0, r12: 0, r13: 0,
-        r14: 0, r15: 0, rip: 0, rsp: 0, rbp: 0, ss: 0, rsi: 0, rdi: 0, cs: 0, ds: 0, es: 0, fs: 0,
-        gs: 0, exe: [0; 4096],
+    ProbeRaw {
+        pid: 0,
+        rax: 0,
+        rbx: 0,
+        rcx: 0,
+        rdx: 0,
+        r8: 0,
+        r9: 0,
+        r10: 0,
+        r11: 0,
+        r12: 0,
+        r13: 0,
+        r14: 0,
+        r15: 0,
+        rip: 0,
+        rsp: 0,
+        rbp: 0,
+        ss: 0,
+        rsi: 0,
+        rdi: 0,
+        cs: 0,
+        ds: 0,
+        es: 0,
+        fs: 0,
+        gs: 0,
+        exe: [0; 4096],
     }
 }
 
@@ -139,19 +168,20 @@ fn main() {
         Command::Restore { dump } => {
             restore_from_dump(dump);
         }
-        Command::PtraceRestore { pid, dump} => {
+        Command::PtraceRestore { pid, dump } => {
             let pid = Pid::from_raw(pid as i32);
 
             let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
-            // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
-            // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
+                                                           // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
+                                                           // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
 
             let call_instr = stop_with_ptrace(pid, stop_addr);
 
             dump_with_ptrace(pid, dump.clone());
             restore_from_dump(dump);
 
-            ptrace::write(pid, stop_addr, call_instr).expect("failed to write back call instruction");
+            ptrace::write(pid, stop_addr, call_instr)
+                .expect("failed to write back call instruction");
             ptrace::cont(pid, None).expect("failed to continue process");
         }
     }
@@ -180,14 +210,16 @@ fn stop_with_ptrace(pid: Pid, stop_addr: *mut c_void) -> i64 {
 
 fn dump_with_ptrace(pid: Pid, to: String) {
     let exe = fs::read_link(format!("/proc/{}/exe", pid))
-        .expect("failed to read exe name").into_os_string().into_string()
+        .expect("failed to read exe name")
+        .into_os_string()
+        .into_string()
         .expect("failed to convert exe name to string");
 
     println!("exe: {}", exe);
 
     let regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
 
-    let mut data = Probe{
+    let mut data = Probe {
         pid: pid.as_raw() as u64,
         rax: regs.rax,
         rbx: regs.rbx,
@@ -266,7 +298,7 @@ fn restore_from_dump(dump: String) {
             ptrace::traceme().expect("Failed to ptrace traceme");
 
             println!("child process setup");
-            println!("exe: {:#?}", dump.exe.as_ptr());
+            println!("exe: {:#?}", dump.exe);
 
             // Stop itself for first setup phase
             raise(SIGSTOP);
@@ -300,15 +332,27 @@ fn restore_from_dump(dump: String) {
     println!("status after child reached main: {:#?}", status);
 
     // Restores registers of the child
-    let mut regs =
-        ptrace::getregs(pid).expect("Error when retrieving child process registers");
+    let mut regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
 
-    regs.rax = dump.rax; regs.rbx = dump.rbx; regs.rcx = dump.rcx; regs.rdx = dump.rdx;
-    regs.r8 = dump.r8; regs.r9 = dump.r9; regs.r10 = dump.r10; regs.r11 = dump.r11;
-    regs.r12 = dump.r12; regs.r13 = dump.r13; regs.r14 = dump.r14; regs.r15 = dump.r15;
+    regs.rax = dump.rax;
+    regs.rbx = dump.rbx;
+    regs.rcx = dump.rcx;
+    regs.rdx = dump.rdx;
+    regs.r8 = dump.r8;
+    regs.r9 = dump.r9;
+    regs.r10 = dump.r10;
+    regs.r11 = dump.r11;
+    regs.r12 = dump.r12;
+    regs.r13 = dump.r13;
+    regs.r14 = dump.r14;
+    regs.r15 = dump.r15;
 
-    regs.rip = dump.rip; regs.rsp = dump.rsp; regs.rbp = dump.rbp; regs.ss = dump.ss;
-    regs.rsi = dump.rsi; regs.rdi = dump.rdi;
+    regs.rip = dump.rip;
+    regs.rsp = dump.rsp;
+    regs.rbp = dump.rbp;
+    regs.ss = dump.ss;
+    regs.rsi = dump.rsi;
+    regs.rdi = dump.rdi;
 
     regs.cs = dump.cs;
     // TODO: find a way to get the real values in get-tasks.c or in another way
@@ -381,7 +425,7 @@ fn read_mem_region(pid: Pid, region_name: &str, data: &mut Vec<u8>) -> u64 {
     region_from as u64
 }
 
-fn write_mem_region(pid: Pid, mut from: u64, data: &Vec<u8>) {
+fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
     println!(
         "Write {} bytes in region 0x{:x} to 0x{:x}",
         data.len(),
