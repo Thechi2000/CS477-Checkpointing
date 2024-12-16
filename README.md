@@ -26,7 +26,7 @@ gcc hello-world.c -O3 -no-pie -fno-pic -static
 
 Anywhere:
 ```
-echo 0 | sudo tee /proc/sys/kernel/randomize_va_spac # disables ASLR
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space # disables ASLR
 ```
 
 ## Run
