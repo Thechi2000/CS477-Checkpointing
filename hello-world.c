@@ -9,6 +9,6 @@ int main() {
       "mov %%rsp, %0" // Move the value of rsp into the output variable
       : "=r" (rsp_value) // Output operand: store the value in rsp_value
     );
-    printf("0x%lx: Hello world!\n", rsp_value);
+    printf("0x%lx: Hello world!\n", i);
   }
 }

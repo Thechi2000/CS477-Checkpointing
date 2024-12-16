@@ -82,7 +82,7 @@ fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let cli = Cli::parse();
 
-    let stop_addr = 0x401634 as *mut libc::c_void; // stops in main loop for hello-world
+    let stop_addr = 0x401641 as *mut libc::c_void; // stops in main loop for hello-world
     // let stop_addr = 0x401516 as *mut libc::c_void; // stops in main loop for hello-world
     // let stop_addr = 0x401650 as *mut c_void; // stops in function body for hello-world-func.c
     // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
@@ -245,7 +245,7 @@ fn restore_from_dump(dump: String) {
     regs.r14 = dump.r14;
     regs.r15 = dump.r15;
 
-    regs.rip = 0x401634; //dump.rip;
+    regs.rip = 0x401641; //dump.rip;
     regs.rsp = dump.rsp;
     regs.rbp = dump.rbp;
     regs.ss = dump.ss;
