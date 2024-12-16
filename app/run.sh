@@ -17,7 +17,7 @@ rm -f /tmp/a_out_pid
 echo "PID of a.out: $A_OUT_PID"
 
 # starts the restore process using the pid found
-tmux send-keys -t $SESSION_NAME:0.0  "./target/debug/app ptrace-restore $A_OUT_PID hello.proc" C-m
+tmux send-keys -t $SESSION_NAME:0.0  "./target/debug/app dump-restore $A_OUT_PID hello.proc" C-m
 
 # Attach to tmux and setup kill-session on exit
 tmux set-option -t $SESSION_NAME destroy-unattached off
