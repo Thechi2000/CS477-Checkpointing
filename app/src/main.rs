@@ -104,6 +104,7 @@ struct Probe {
     es: u64,
     fs: u64,
     gs: u64,
+    eflags: u64,
     exe: String,
     stack_from: u64,
     stack: Vec<u8>,
@@ -171,9 +172,9 @@ fn main() {
         Command::PtraceRestore { pid, dump } => {
             let pid = Pid::from_raw(pid as i32);
 
-            let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
-                                                           // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
-                                                           // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
+            // let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
+            // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
+            let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
 
             let call_instr = stop_with_ptrace(pid, stop_addr);
 
@@ -244,6 +245,7 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         es: regs.es,
         fs: regs.fs,
         gs: regs.gs,
+        eflags: regs.eflags,
         exe,
         stack_from: 0,
         stack: vec![],
@@ -355,8 +357,11 @@ fn restore_from_dump(dump: String) {
     regs.rdi = dump.rdi;
 
     regs.cs = dump.cs;
-    // TODO: find a way to get the real values in get-tasks.c or in another way
-    //regs.ds = dump.ds; regs.es = dump.es; regs.fs = dump.fs; regs.gs = dump.gs; regs.eflags = 0x202;
+    regs.ds = dump.ds;
+    regs.es = dump.es;
+    regs.fs = dump.fs;
+    regs.gs = dump.gs;
+    regs.eflags = dump.eflags;
 
     println!("registers restored: {:x} -> {:#?}", regs.rip, regs);
 
@@ -393,6 +398,8 @@ fn get_mem_region_limits(pid: Pid, region_name: &str) -> (usize, usize) {
     let mut str = String::new();
     map.read_to_string(&mut str)
         .expect("Failed to read maps file");
+
+    println!("maps file: {}", str);
 
     let mut region_from = usize::MAX;
     let mut region_to = 0;
@@ -498,6 +505,7 @@ fn read_regs_with_get_tasks(pid: u64) -> Probe {
         es: data.es,
         fs: data.fs,
         gs: data.gs,
+        eflags: 0x202,
         exe,
         stack_from: 0,
         stack: vec![],
