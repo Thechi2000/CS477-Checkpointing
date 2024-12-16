@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use nix::{
-    ioctl_readwrite,
     sys::{ptrace, wait::waitpid},
     unistd::Pid,
 };
@@ -8,11 +7,11 @@ use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    env,
-    ffi::CStr,
-    fs::{self, File, OpenOptions},
-    io::{Read, Seek, Write},
-    os::fd::AsRawFd,
+    env
+    ,
+    fs::{self, File},
+    io::{Read, Seek, Write}
+    ,
 };
 use std::{ffi::c_void, io::BufRead};
 
@@ -23,66 +22,6 @@ struct Region {
     name: String,
     from: u64,
     data: Vec<u8>,
-}
-
-#[repr(C)]
-#[derive(Debug)]
-struct ProbeRaw {
-    pid: u64,
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
-    r8: u64,
-    r9: u64,
-    r10: u64,
-    r11: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-    rip: u64,
-    rsp: u64,
-    rbp: u64,
-    ss: u64,
-    rsi: u64,
-    rdi: u64,
-    cs: u64,
-    ds: u64,
-    es: u64,
-    fs: u64,
-    gs: u64,
-    exe: [u8; 4096],
-}
-
-fn new_empty_raw_probe() -> ProbeRaw {
-    ProbeRaw {
-        pid: 0,
-        rax: 0,
-        rbx: 0,
-        rcx: 0,
-        rdx: 0,
-        r8: 0,
-        r9: 0,
-        r10: 0,
-        r11: 0,
-        r12: 0,
-        r13: 0,
-        r14: 0,
-        r15: 0,
-        rip: 0,
-        rsp: 0,
-        rbp: 0,
-        ss: 0,
-        rsi: 0,
-        rdi: 0,
-        cs: 0,
-        ds: 0,
-        es: 0,
-        fs: 0,
-        gs: 0,
-        exe: [0; 4096],
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,8 +55,6 @@ struct Probe {
     regions: Vec<Region>,
 }
 
-ioctl_readwrite!(read_regs, b'a', 1, ProbeRaw);
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -128,20 +65,14 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     #[command(about = "Get the registers of a process")]
-    ReadRegs {
-        pid: u64,
-    },
-    ReadMem {
-        pid: u64,
-    },
     Dump {
         pid: u64,
-        output: String,
+        dump: String,
     },
     Restore {
         dump: String,
     },
-    PtraceRestore {
+    DumpRestore {
         pid: u64,
         dump: String,
     },
@@ -151,68 +82,44 @@ fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let cli = Cli::parse();
 
+    let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
+    // let stop_addr = 0x401516 as *mut libc::c_void; // stops in main loop for hello-world
+    // let stop_addr = 0x401650 as *mut c_void; // stops in function body for hello-world-func.c
+    // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
+
     match cli.command {
-        Command::ReadRegs { pid } => {
-            let data = read_regs_with_get_tasks(pid);
-
-            println!("ioctl succeeded");
-            println!("{:#x?}", data);
-        }
-        Command::ReadMem { pid } => {
-            let (stack_from, stack_to) = get_mem_region_limits(Pid::from_raw(pid as i32), "stack");
-
-            println!("Stack:");
-            println!("{:x} {:x}", stack_from, stack_to);
-
-            let (heap_from, heap_to) = get_mem_region_limits(Pid::from_raw(pid as i32), "heap");
-
-            println!("Heap:");
-            println!("{:x} {:x}", heap_from, heap_to);
-        }
-        Command::Dump { pid, output } => {
-            dump_pid(pid, output);
+        Command::Dump { pid, dump } => {
+            let pid = Pid::from_raw(pid as i32);
+            stop_with_ptrace(pid, stop_addr);
+            dump_with_ptrace(pid, dump.clone());
+            ptrace::kill(pid).expect("failed to kill processed");
         }
         Command::Restore { dump } => {
             restore_from_dump(dump);
+            println!("process restored !");
         }
-        Command::PtraceRestore { pid, dump } => {
+        Command::DumpRestore { pid, dump } => {
             let pid = Pid::from_raw(pid as i32);
-
-            // let stop_addr = 0x401504 as *mut libc::c_void; // stops in main loop for hello-world
-            // let stop_addr = 0x401650 as *mut libc::c_void; // stops in function body for hello-world-func.c
-            let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
-
-            let call_instr = stop_with_ptrace(pid, stop_addr);
-
+            stop_with_ptrace(pid, stop_addr);
             dump_with_ptrace(pid, dump.clone());
-            restore_from_dump(dump);
 
-            ptrace::write(pid, stop_addr, call_instr)
-                .expect("failed to write back call instruction");
-            ptrace::cont(pid, None).expect("failed to continue process");
+            restore_from_dump(dump);
+            ptrace::kill(pid).expect("failed to kill processed");
         }
     }
 }
 
-fn stop_with_ptrace(pid: Pid, stop_addr: *mut c_void) -> i64 {
-    // ptrace attache to the process
+fn stop_with_ptrace(pid: Pid, stop_addr: *mut c_void) {
+    // ptrace attrache to the process
     ptrace::attach(pid).expect("failed to seize process");
     waitpid(pid, None).unwrap();
 
-    println!("process attached !");
-
     // replace the call instruction with an interrupt
-    let call_instr = ptrace::read(pid, stop_addr).expect("failed to read process");
-
-    println!("instruction read !");
-
     ptrace::write(pid, stop_addr, INT3).expect("failed to write interrupt instruction");
 
     // restart process and wait for interrupt
     ptrace::cont(pid, None).expect("failed to continue process");
     waitpid(pid, None).unwrap();
-
-    call_instr as i64
 }
 
 fn dump_with_ptrace(pid: Pid, to: String) {
@@ -253,23 +160,11 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         gs: regs.gs,
         eflags: regs.eflags,
         exe,
-        regions: vec![],
+        regions: dump_regions(pid.as_raw() as u64),
     };
 
-    File::create(to)
-        .expect("Failed to create output file")
-        .write_all(
-            postcard::to_allocvec(&data)
-                .expect("Failed to serialize data")
-                .as_slice(),
-        )
-        .expect("Failed to write to output file");
-}
-
-fn dump_pid(pid: u64, to: String) {
-    let mut data = read_regs_with_get_tasks(pid);
-
-    data.regions = dump_regions(pid);
+    println!("registers: {:#?}", regs);
+    print_mem(pid, data.rsp - 4*8, 8);
 
     File::create(to)
         .expect("Failed to create output file")
@@ -314,8 +209,6 @@ fn restore_from_dump(dump: String) {
     }
     let pid = Pid::from_raw(pid);
 
-    // First setup phase
-
     // Sync on stop of the child process
     waitpid(pid, None).unwrap();
 
@@ -328,11 +221,13 @@ fn restore_from_dump(dump: String) {
 
     waitpid(pid, None).unwrap();
 
-    ptrace::write(pid, find_main_address(&dump.exe) as *mut libc::c_void, INT3).unwrap();
+    let main_start = find_main_address(&dump.exe) as *mut libc::c_void;
+    let old_instr = ptrace::read(pid, main_start).expect("Failed to read at main");
+    ptrace::write(pid,  main_start, INT3).unwrap();
     ptrace::cont(pid, None).unwrap();
 
-    let status = waitpid(pid, None).unwrap();
-    println!("status after child reached main: {:#?}", status);
+    waitpid(pid, None).unwrap();
+    // ptrace::write(pid,  main_start, old_instr).unwrap(); // restore back old instruction
 
     // Restores registers of the child
     let mut regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
@@ -351,7 +246,7 @@ fn restore_from_dump(dump: String) {
     regs.r15 = dump.r15;
 
     regs.rip = dump.rip;
-    regs.rsp = dump.rsp;
+    regs.rsp = dump.rsp;// + 3 * 8;
     regs.rbp = dump.rbp;
     regs.ss = dump.ss;
     regs.rsi = dump.rsi;
@@ -364,15 +259,16 @@ fn restore_from_dump(dump: String) {
     regs.gs = dump.gs;
     regs.eflags = dump.eflags;
 
-    println!("registers restored: {:x} -> {:#?}", regs.rip, regs);
-
     ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
+    println!("registers after restore: {:#?}", regs);
+
     // Restores stack of the child
-    for region in dump.regions {
-        println!("Write {} bytes at 0x{:x}", region.data.len(), region.from);
-        write_mem_region(pid, region.from, &region.data);
-    }
+    // for region in dump.regions {
+    //     write_mem_region(pid, region.from, &region.data);
+    // }
+
+    // print_mem(pid, dump.rsp - 4*8, 8);
 
     ptrace::cont(pid, None).unwrap();
 
@@ -395,36 +291,13 @@ fn find_main_address(exe: &str) -> i32 {
     main_address as i32
 }
 
-fn get_mem_region_limits(pid: Pid, region_name: &str) -> (usize, usize) {
-    let mut map = File::open(format!("/proc/{}/maps", pid)).expect("Failed to open maps file");
-
-    let mut str = String::new();
-    map.read_to_string(&mut str)
-        .expect("Failed to read maps file");
-
-    let mut region_from = usize::MAX;
-    let mut region_to = 0;
-
-    let region_re =
-        Regex::new(format!(r"([0-9a-f]+)-([0-9a-f]+).*\[{}\]\n", region_name).as_str()).unwrap();
-
-    for c in region_re.captures_iter(&str) {
-        let from = usize::from_str_radix(c.get(1).unwrap().as_str(), 16).unwrap();
-        let to = usize::from_str_radix(c.get(2).unwrap().as_str(), 16).unwrap();
-
-        region_from = region_from.min(from);
-        region_to = region_to.max(to);
-    }
-    (region_from, region_to)
-}
-
 fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
-    println!(
-        "Write {} bytes in region 0x{:x} to 0x{:x}",
-        data.len(),
-        from,
-        from + data.len() as u64
-    );
+    // println!(
+    //     "Write {} bytes in region 0x{:x} to 0x{:x}",
+    //     data.len(),
+    //     from,
+    //     from + data.len() as u64
+    // );
 
     let data_i64: Vec<i64> = data
         .chunks(8) // Create chunks of 8 elements
@@ -441,59 +314,6 @@ fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
     for word in data_i64 {
         ptrace::write(pid, from as *mut libc::c_void, word).expect("Failed to write in memory");
         from += 8;
-    }
-    println!("Writing to stack succeeded !");
-}
-
-fn read_regs_with_get_tasks(pid: u64) -> Probe {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/get_task")
-        .expect("Failed to open device");
-
-    let mut data = new_empty_raw_probe();
-    data.pid = pid;
-
-    let exe;
-
-    unsafe {
-        read_regs(file.as_raw_fd(), &mut data).expect("ioctl failed");
-
-        exe = CStr::from_ptr(data.exe.as_ptr() as *const _)
-            .to_str()
-            .unwrap()
-            .to_owned();
-    }
-
-    Probe {
-        pid: data.pid,
-        rax: data.rax,
-        rbx: data.rbx,
-        rcx: data.rcx,
-        rdx: data.rdx,
-        r8: data.r8,
-        r9: data.r9,
-        r10: data.r10,
-        r11: data.r11,
-        r12: data.r12,
-        r13: data.r13,
-        r14: data.r14,
-        r15: data.r15,
-        rip: data.rip,
-        rsp: data.rsp,
-        rbp: data.rbp,
-        ss: data.ss,
-        rsi: data.rsi,
-        rdi: data.rdi,
-        cs: data.cs,
-        ds: data.ds,
-        es: data.es,
-        fs: data.fs,
-        gs: data.gs,
-        eflags: 0x202,
-        exe,
-        regions: vec![],
     }
 }
 
@@ -536,4 +356,33 @@ fn dump_region(line: &str, pid: u64) -> Option<Region> {
         .expect("Failed to read from mem file");
 
     Some(Region { name, from, data })
+}
+
+fn print_mem(pid: Pid, at: u64, n: u64) {
+    println!("memory of proc {} from 0x{:08x} to 0x{:08x}", pid.as_raw(), at, at + 8 * n);
+    for i in 0..n {
+        let addr = at + i * 8;
+        if i % 2 == 0 {
+            print!("0x{:08x}: ", addr);
+        }
+        let mut word = ptrace::read(pid, addr as *mut libc::c_void)
+            .expect("mem failed") as i64;
+        word = reverse_bytes(word);
+        print!(" {:08x} {:08x}", word & (0xffffffff << 32), word & 0xffffffff);
+        if i % 2 == 1 {
+            println!();
+        }
+    }
+}
+
+fn reverse_bytes(n: i64) -> i64 {
+    let mut n_rev = 0;
+    for i in 0..4 {
+        let offset_low: i64 = 8 * i;
+        let offset_high: i64 = 8 * (7 - i);
+        let bit_low = (n >> offset_low) & 0xff;
+        let bit_high = (n >> offset_high) & 0xff;
+        n_rev |= (bit_low << offset_high) | (bit_high << offset_low);
+    }
+    n_rev
 }
