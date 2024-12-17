@@ -115,8 +115,6 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         .into_string()
         .expect("failed to convert exe name to string");
 
-    println!("exe: {}", exe);
-
     let regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
 
     let data = Probe {
@@ -149,8 +147,6 @@ fn dump_with_ptrace(pid: Pid, to: String) {
         regions: dump_regions(pid.as_raw() as u64, 0),
     };
 
-    println!("registers: {:#?}", regs);
-
     File::create(to)
         .expect("Failed to create output file")
         .write_all(
@@ -179,9 +175,6 @@ fn restore_from_dump(dump: String) {
         pid = fork();
         if pid == 0 {
             ptrace::traceme().expect("Failed to ptrace traceme");
-
-            println!("child process setup");
-            println!("exe: {:#?}", dump.exe);
 
             // Stop itself for first setup phase
             raise(SIGSTOP);
@@ -246,17 +239,13 @@ fn restore_from_dump(dump: String) {
 
     ptrace::setregs(pid, regs).expect("Error when setting registers of child process.");
 
-    println!("registers after restore: {:#?}", regs);
-
     // Restores stack of the child
     for region in dump.regions {
         write_mem_region(pid, region.from, &region.data);
     }
 
     ptrace::cont(pid, None).unwrap();
-
-    let status = waitpid(pid, None).unwrap();
-    println!("{:#?}", status);
+    waitpid(pid, None).expect("Error when restoring process");
 }
 
 fn find_main_address(exe: &str) -> i32 {
@@ -275,13 +264,6 @@ fn find_main_address(exe: &str) -> i32 {
 }
 
 fn write_mem_region(pid: Pid, mut from: u64, data: &[u8]) {
-    println!(
-        "Write {} bytes in region 0x{:x} to 0x{:x}",
-        data.len(),
-        from,
-        from + data.len() as u64
-    );
-
     let data_i64: Vec<i64> = data
         .chunks(8) // Create chunks of 8 elements
         .map(|chunk| {
@@ -332,8 +314,6 @@ fn dump_region(line: &str, pid: u64, lower_limit: u64) -> Option<Region> {
     }
     let to = u64::from_str_radix(captures.get(2).unwrap().as_str(), 16).unwrap();
 
-    println!("Saving region {} (0x{:x}-0x{:x})", name, from, to);
-
     let mut file = File::open(format!("/proc/{}/mem", pid)).expect("Failed to open mem file");
     file.seek(std::io::SeekFrom::Start(from))
         .expect("Failed to seek in mem file");
@@ -343,31 +323,6 @@ fn dump_region(line: &str, pid: u64, lower_limit: u64) -> Option<Region> {
         .expect("Failed to read from mem file");
 
     Some(Region { name, from, data })
-}
-
-fn print_mem(pid: Pid, at: u64, n: u64) {
-    println!(
-        "memory of proc {} from 0x{:08x} to 0x{:08x}",
-        pid.as_raw(),
-        at,
-        at + 8 * n
-    );
-    for i in 0..n {
-        let addr = at + i * 8;
-        if i % 2 == 0 {
-            print!("0x{:08x}: ", addr);
-        }
-        let mut word = ptrace::read(pid, addr as *mut libc::c_void).expect("mem failed") as i64;
-        word = reverse_bytes(word);
-        print!(
-            " {:08x} {:08x}",
-            word & (0xffffffff << 32),
-            word & 0xffffffff
-        );
-        if i % 2 == 1 {
-            println!();
-        }
-    }
 }
 
 fn reverse_bytes(n: i64) -> i64 {
