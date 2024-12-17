@@ -7,11 +7,9 @@ use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    env
-    ,
+    env,
     fs::{self, File},
-    io::{Read, Seek, Write}
-    ,
+    io::{Read, Seek, Write},
 };
 use std::{ffi::c_void, io::BufRead};
 
@@ -83,9 +81,6 @@ fn main() {
     let cli = Cli::parse();
 
     let stop_addr = 0x401641 as *mut libc::c_void; // stops in main loop for hello-world
-    // let stop_addr = 0x401516 as *mut libc::c_void; // stops in main loop for hello-world
-    // let stop_addr = 0x401650 as *mut c_void; // stops in function body for hello-world-func.c
-    // let stop_addr = 0x40150b as *mut libc::c_void; // stops in main loop for hello-world-func.c
 
     match cli.command {
         Command::Dump { pid, dump } => {
@@ -223,11 +218,11 @@ fn restore_from_dump(dump: String) {
 
     let main_start = find_main_address(&dump.exe) as *mut libc::c_void;
     let old_instr = ptrace::read(pid, main_start).expect("Failed to read at main");
-    ptrace::write(pid,  main_start, INT3).unwrap();
+    ptrace::write(pid, main_start, INT3).unwrap();
     ptrace::cont(pid, None).unwrap();
 
     waitpid(pid, None).unwrap();
-    ptrace::write(pid,  main_start, old_instr).unwrap(); // restore back old instruction
+    ptrace::write(pid, main_start, old_instr).unwrap(); // restore back old instruction
 
     // Restores registers of the child
     let mut regs = ptrace::getregs(pid).expect("Error when retrieving child process registers");
@@ -365,16 +360,24 @@ fn dump_region(line: &str, pid: u64, lower_limit: u64) -> Option<Region> {
 }
 
 fn print_mem(pid: Pid, at: u64, n: u64) {
-    println!("memory of proc {} from 0x{:08x} to 0x{:08x}", pid.as_raw(), at, at + 8 * n);
+    println!(
+        "memory of proc {} from 0x{:08x} to 0x{:08x}",
+        pid.as_raw(),
+        at,
+        at + 8 * n
+    );
     for i in 0..n {
         let addr = at + i * 8;
         if i % 2 == 0 {
             print!("0x{:08x}: ", addr);
         }
-        let mut word = ptrace::read(pid, addr as *mut libc::c_void)
-            .expect("mem failed") as i64;
+        let mut word = ptrace::read(pid, addr as *mut libc::c_void).expect("mem failed") as i64;
         word = reverse_bytes(word);
-        print!(" {:08x} {:08x}", word & (0xffffffff << 32), word & 0xffffffff);
+        print!(
+            " {:08x} {:08x}",
+            word & (0xffffffff << 32),
+            word & 0xffffffff
+        );
         if i % 2 == 1 {
             println!();
         }
