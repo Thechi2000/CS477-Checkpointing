@@ -6,12 +6,12 @@ use nix::{
 use object::{Object, ObjectSymbol};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::io::BufRead;
 use std::{
     env,
     fs::{self, File},
     io::{Read, Seek, Write},
 };
-use std::{ffi::c_void, io::BufRead};
 
 const INT3: i64 = 0xcc;
 
@@ -80,12 +80,10 @@ fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     let cli = Cli::parse();
 
-    let stop_addr = 0x401641 as *mut libc::c_void; // stops in main loop for hello-world
-
     match cli.command {
         Command::Dump { pid, dump } => {
             let pid = Pid::from_raw(pid as i32);
-            stop_with_ptrace(pid, stop_addr);
+            stop_with_ptrace(pid);
             dump_with_ptrace(pid, dump.clone());
             ptrace::kill(pid).expect("failed to kill processed");
         }
@@ -95,7 +93,7 @@ fn main() {
         }
         Command::DumpRestore { pid, dump } => {
             let pid = Pid::from_raw(pid as i32);
-            stop_with_ptrace(pid, stop_addr);
+            stop_with_ptrace(pid);
             dump_with_ptrace(pid, dump.clone());
 
             ptrace::kill(pid).expect("failed to kill processed");
@@ -104,16 +102,9 @@ fn main() {
     }
 }
 
-fn stop_with_ptrace(pid: Pid, stop_addr: *mut c_void) {
+fn stop_with_ptrace(pid: Pid) {
     // ptrace attrache to the process
     ptrace::attach(pid).expect("failed to seize process");
-    waitpid(pid, None).unwrap();
-
-    // replace the call instruction with an interrupt
-    ptrace::write(pid, stop_addr, INT3).expect("failed to write interrupt instruction");
-
-    // restart process and wait for interrupt
-    ptrace::cont(pid, None).expect("failed to continue process");
     waitpid(pid, None).unwrap();
 }
 
@@ -159,7 +150,6 @@ fn dump_with_ptrace(pid: Pid, to: String) {
     };
 
     println!("registers: {:#?}", regs);
-    print_mem(pid, data.rsp, 8);
 
     File::create(to)
         .expect("Failed to create output file")
@@ -240,7 +230,7 @@ fn restore_from_dump(dump: String) {
     regs.r14 = dump.r14;
     regs.r15 = dump.r15;
 
-    regs.rip = 0x401641; //dump.rip;
+    regs.rip = dump.rip;
     regs.rsp = dump.rsp;
     regs.rbp = dump.rbp;
     regs.ss = dump.ss;
@@ -262,8 +252,6 @@ fn restore_from_dump(dump: String) {
     for region in dump.regions {
         write_mem_region(pid, region.from, &region.data);
     }
-
-    print_mem(pid, dump.rsp, 8);
 
     ptrace::cont(pid, None).unwrap();
 
@@ -335,8 +323,6 @@ fn dump_region(line: &str, pid: u64, lower_limit: u64) -> Option<Region> {
     let is_writable = captures.get(3).unwrap().as_str() == "w";
     let name = captures.get(4).unwrap().as_str().to_owned();
     if ["[vvar]", "[vdso]", "[vsyscall]"].contains(&name.as_str()) || !is_writable {
-        return None;
-    } else if !["[stack]"].contains(&name.as_str()) {
         return None;
     }
 
