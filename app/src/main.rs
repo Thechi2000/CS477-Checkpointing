@@ -89,7 +89,6 @@ fn main() {
         }
         Command::Restore { dump } => {
             restore_from_dump(dump);
-            println!("process restored !");
         }
         Command::DumpRestore { pid, dump } => {
             let pid = Pid::from_raw(pid as i32);
