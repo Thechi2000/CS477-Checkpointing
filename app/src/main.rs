@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use nix::{
-    sys::{ptrace, wait::waitpid},
+    sys::{ptrace, signal::Signal, wait::waitpid},
     unistd::Pid,
 };
 use object::{Object, ObjectSymbol};
@@ -243,7 +243,7 @@ fn restore_from_dump(dump: String) {
         write_mem_region(pid, region.from, &region.data);
     }
 
-    ptrace::cont(pid, None).unwrap();
+    ptrace::detach(pid, Signal::SIGCONT).unwrap();
     waitpid(pid, None).expect("Error when restoring process");
 }
 
